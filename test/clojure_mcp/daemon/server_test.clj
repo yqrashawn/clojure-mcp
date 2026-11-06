@@ -160,3 +160,28 @@
     (is (.exists (io/file dir "port")))
     (is (true? (deref (:stopped d) 5000 :timeout)))
     (is (not (.exists (io/file dir "port"))))))
+
+(deftest cljs-eval-uses-the-calling-projects-shadow-port
+  (testing "cljs_eval with no port reads .shadow-cljs/nrepl.port of the project in the URL"
+    (let [api (create-ns 'shadow.cljs.devtools.api)
+          calls (atom [])
+          dir (temp-dir "proj-cljs")
+          other (temp-dir "proj-other")]
+      (intern api 'active-builds (fn [] #{:dev}))
+      (intern api 'cljs-eval (fn [bid code _] (swap! calls conj [bid code]) {:results ["\"v-stub\""] :out "" :err ""}))
+      (dosync (commute @#'clojure.core/*loaded-libs* conj 'shadow.cljs.devtools.api))
+      (try
+        (io/make-parents (io/file dir ".shadow-cljs" "nrepl.port"))
+        (spit (io/file dir ".shadow-cljs" "nrepl.port") (str *nrepl-port*))
+        (let [{:keys [text error?]} (call-text (session dir) "cljs_eval" {:code "js/process.version"})]
+          (is (false? error?) text)
+          (is (string/includes? text "v-stub"))
+          (is (= [[:dev "js/process.version"]] @calls)))
+        (testing "a project without a shadow port file is told so, not routed to another project's"
+          (let [{:keys [text error?]} (call-text (session other) "cljs_eval" {:code "1"})]
+            (is (true? error?))
+            (is (string/includes? text ".shadow-cljs/nrepl.port"))
+            (is (= 1 (count @calls)))))
+        (finally
+          (dosync (commute @#'clojure.core/*loaded-libs* disj 'shadow.cljs.devtools.api))
+          (remove-ns 'shadow.cljs.devtools.api))))))
