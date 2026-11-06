@@ -107,11 +107,18 @@
 (defmethod tool-system/tool-annotations ::shadow-tool [{:keys [annotations]}] annotations)
 
 (defmethod tool-system/validate-inputs ::shadow-tool
-  [{:keys [nrepl-client-atom requires-code? config-build?]} {:keys [code build port timeout_ms] :as inputs}]
+  [{:keys [nrepl-client-atom requires-code? config-build?]} {:keys [code build port timeout_ms match runtime_id] :as inputs}]
   (when (and requires-code? (or (not (string? code)) (string/blank? code)))
     (throw (ex-info "Missing required parameter: code (a ClojureScript expression string)." {:inputs inputs})))
   (when-let [msg (core/invalid-build-arg build)]
     (throw (ex-info msg {:inputs inputs})))
+  ;; match and runtime_id are printed into the evaluated form, and nested
+  ;; map keys arrive keywordized (printed raw), so only the declared type
+  ;; may pass
+  (when (and (some? match) (not (string? match)))
+    (throw (ex-info (str "Error parameter must be a string: match " (pr-str match)) {:inputs inputs})))
+  (when (and (some? runtime_id) (not (pos-int? runtime_id)))
+    (throw (ex-info (str "Error parameter must be positive integer: runtime_id " (pr-str runtime_id)) {:inputs inputs})))
   (when (and port (not (pos-int? port)))
     (throw (ex-info (str "Error parameter must be positive integer: port " (pr-str port)) {:inputs inputs})))
   (when (and timeout_ms (not (number? timeout_ms)))

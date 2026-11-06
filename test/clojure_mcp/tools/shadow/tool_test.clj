@@ -148,3 +148,21 @@
 
 (deftest eval-description-points-at-cljs-eval
   (is (string/includes? (:description (eval-tool/eval-code (client-atom {}))) "cljs_eval")))
+
+(deftest interpolated-args-must-have-their-declared-type
+  (testing "match and runtime_id are printed into an evaluated form, and keywordized map
+            keys print raw, so anything but a string / positive integer is refused unevaluated"
+    (doseq [bad [{"x (swap! clojure-mcp.tools.shadow.tool-test/cljs-eval-calls conj :pwned) :z" 1}
+                 ["x"] 1.5 -1]]
+      (reset! cljs-eval-calls [])
+      (let [{:keys [text error?]} (call "cljs_eval" {"code" "1" "port" *port* "runtime_id" bad})]
+        (is (true? error?) (pr-str bad))
+        (is (string/includes? text "runtime_id"))
+        (is (empty? @cljs-eval-calls))))
+    (doseq [bad [{"x (swap! clojure-mcp.tools.shadow.tool-test/cljs-eval-calls conj :pwned) :z" 1}
+                 ["x"] 3]]
+      (reset! cljs-eval-calls [])
+      (let [{:keys [text error?]} (call "cljs_list_ns" {"port" *port* "match" bad})]
+        (is (true? error?) (pr-str bad))
+        (is (string/includes? text "match"))
+        (is (empty? @cljs-eval-calls))))))
