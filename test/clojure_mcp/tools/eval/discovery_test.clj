@@ -97,3 +97,14 @@
       (let [{:keys [result error?]} (deref p 5000 nil)]
         (is (true? error?))
         (is (string/includes? (string/join "\n" result) "bb nrepl"))))))
+
+(deftest no-nrepl-help-never-invents-a-start-command
+  (testing "with nothing running, the only start commands shown are the project's own:
+            a generic bare-nREPL command would start a REPL without the project's aliases"
+    (let [dir (tmp-project {})
+          client {::config/config {:nrepl-user-dir dir :start-repl-hint "bb start:detach"}}]
+      (with-redefs [ports/discover-nrepl-ports (constantly [])]
+        (let [text (string/join "\n" (map second (:outputs (discovery/no-nrepl-help client dir))))]
+          (is (string/includes? text "bb start:detach"))
+          (is (not (string/includes? text "nrepl.cmdline")) text)
+          (is (not (string/includes? text "-Sdeps")) text))))))

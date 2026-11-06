@@ -111,7 +111,7 @@ can be configured under `:models` in `.clojure-mcp/config.edn` (see
 
 ## Available Tools
 
-The full toolkit (what you get with no `:config-profile`) is organized by category. The `:repl` profile uses only `clojure_eval`, `list_nrepl_ports` and `paren_repair`.
+The full toolkit (what you get with no `:config-profile`) is organized by category. The `:repl` profile uses only `clojure_eval`, `list_nrepl_ports`, `paren_repair` and the four `cljs_*` tools.
 
 ### Read-Only Tools
 
