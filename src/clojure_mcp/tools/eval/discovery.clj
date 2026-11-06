@@ -113,9 +113,10 @@
    without the project's aliases."
   [nrepl-client-map project-dir]
   (let [found (port-scan project-dir)
+        live (filter :valid found)
         scan (cond
                (nil? found) nil
-               (empty? found) "No nREPL servers are running."
+               (empty? live) "No nREPL servers are running."
                :else (string/join "\n" (:result (tool-system/format-results {:tool-type :list-nrepl-ports} found))))
         hints (start-repl-hints project-dir (config/get-start-repl-hints nrepl-client-map))
         start (if (seq hints)
@@ -127,7 +128,7 @@
                      "shadow-cljs.edn or project.clj: check its README for how it starts its REPL."))
         guidance (str "No nREPL was auto-discovered for working dir: " project-dir
                       " (no .nrepl-port there, and no `port` arg given). "
-                      (if (seq found)
+                      (if (seq live)
                         (str "Pick a port from the running REPLs listed above and retry `clojure_eval` "
                              "with `port: <n>` (for ClojureScript, use `cljs_eval` against the shadow-cljs nREPL). "
                              "The listing groups by the directory that owns each REPL, and a port under "

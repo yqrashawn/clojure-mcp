@@ -110,12 +110,16 @@
           (is (not (string/includes? text "-Sdeps")) text))))))
 
 (deftest no-nrepl-help-points-at-a-listing-only-when-there-is-one
-  (testing "with no REPL listed (none running, or the scan failed), the agent is told to
-            start one, not to pick a port from a list that is not there"
+  (testing "with no nREPL listed (none running, only non-nREPL JVM listeners, or the scan
+            failed), the agent is told to start one, not to pick a port from a list that is not there"
     (let [dir (tmp-project {})
           client {::config/config {:nrepl-user-dir dir}}]
-      (doseq [scan [(constantly []) (fn [_] (throw (Exception. "lsof missing")))]]
+      (doseq [scan [(constantly [])
+                    (constantly [{:host "localhost" :port 8080 :valid false}])
+                    (fn [_] (throw (Exception. "lsof missing")))]]
         (with-redefs [ports/discover-nrepl-ports scan]
           (let [text (string/join "\n" (map second (:outputs (discovery/no-nrepl-help client dir))))]
             (is (not (string/includes? text "listed above")) text)
-            (is (string/includes? text "start") text)))))))
+            (is (not (string/includes? text "Total: 0")) text)
+            (is (string/includes? text "No running REPL was found") text)
+            (is (string/includes? text "README") text)))))))
