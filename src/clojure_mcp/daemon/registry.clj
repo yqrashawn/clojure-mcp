@@ -6,6 +6,7 @@
   (:require [clojure.java.io :as io]
             [clojure-mcp.agent.cchp-model :as cchp]
             [clojure-mcp.config :as config]
+            [clojure-mcp.config.schema :as schema]
             [clojure-mcp.core :as core]
             [clojure-mcp.tools :as tools]
             [clojure-mcp.tools.nrepl-ports.core :as ports]
@@ -33,8 +34,12 @@
       (cchp/create-chat-model {:base-url base :workspace-root dir}))))
 
 (defn- build-entry [dir port]
-  (let [client-atom (atom (core/create-and-start-nrepl-connection
-                           (cond-> {:project-dir dir} port (assoc :port port))))]
+  ;; The entry is shared by every session, so [:env] refs are not checked
+  ;; against whichever session built it; a model checks its own when a
+  ;; session's call creates it.
+  (let [client-atom (atom (binding [schema/*validate-env-vars* false]
+                            (core/create-and-start-nrepl-connection
+                             (cond-> {:project-dir dir} port (assoc :port port)))))]
     {:dir dir
      :nrepl-client-atom client-atom
      :tool-fns (into {} (map (juxt :name :tool-fn)) (tools/build-all-tools client-atom))
@@ -89,8 +94,8 @@
       (cleanup-entry! entry))))
 
 (defn tool-enabled?
-  "Whether the project's own config (:enable-tools / :disable-tools) allows
-   `tool-name`. The daemon's tool list is shared by every project, so this is
-   checked per call."
+  "Whether the project's config (:enable-tools / :disable-tools) and the
+   calling session's ENABLE_TOOLS / DISABLE_TOOLS allow `tool-name`. The
+   daemon's tool list is shared by every project, so this is checked per call."
   [entry tool-name]
   (config/tool-id-enabled? @(:nrepl-client-atom entry) (keyword tool-name)))

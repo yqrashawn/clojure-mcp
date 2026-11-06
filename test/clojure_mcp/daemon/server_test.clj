@@ -143,7 +143,14 @@
     (spit (io/file dir ".clojure-mcp" "config.edn") "{:disable-tools [:bash]}")
     (let [{:keys [text error?]} (call-text (session dir) "bash" {:command "echo hi"})]
       (is (true? error?))
-      (is (string/includes? text "config.edn")))))
+      (is (string/includes? text "config.edn"))))
+  (testing "a session's own DISABLE_TOOLS turns the tool off for that session, and the message names it"
+    (let [dir (temp-dir "proj-env-filter")
+          id (get (json/read-str (.body (send! :post "/env" {:body {"PATH" (System/getenv "PATH") "DISABLE_TOOLS" "bash"}}))) "id")
+          {:keys [text error?]} (call-text (session dir {"X-Clojure-Mcp-Env" id}) "bash" {:command "echo hi"})]
+      (is (true? error?))
+      (is (string/includes? text "DISABLE_TOOLS") text)
+      (is (false? (:error? (call-text (session dir) "bash" {:command "echo hi"}))) "other sessions keep it"))))
 
 (deftest state-files-and-modes
   (let [dir (io/file @state-dir)
