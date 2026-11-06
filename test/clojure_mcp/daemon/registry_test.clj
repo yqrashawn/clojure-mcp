@@ -5,7 +5,8 @@
   (:require [clojure.java.io :as io]
             [clojure.test :refer [deftest is testing]]
             [clojure-mcp.core :as core]
-            [clojure-mcp.daemon.registry :as registry])
+            [clojure-mcp.daemon.registry :as registry]
+            [clojure-mcp.tools.nrepl-ports.core :as ports])
   (:import (java.nio.file Files)
            (java.nio.file.attribute FileAttribute)
            (java.time Instant)))
@@ -70,3 +71,13 @@
       (is (false? (registry/tool-enabled? e "bash")))
       (is (true? (registry/tool-enabled? e "clojure_eval")))
       (is (fn? (get (:tool-fns e) "clojure_eval"))))))
+
+(deftest eviction-during-a-lookup-still-returns-an-entry
+  (testing "an evict-stale! landing between the fast-path check and the read rebuilds instead of returning nil"
+    (let [reg (registry/new-registry)
+          dir (temp-dir)
+          read-port ports/read-nrepl-port-file]
+      (registry/get-or-create! reg dir)
+      (let [entry (with-redefs [ports/read-nrepl-port-file (fn [d] (reset! reg {}) (read-port d))]
+                    (registry/get-or-create! reg dir))]
+        (is (= dir (:dir entry)))))))

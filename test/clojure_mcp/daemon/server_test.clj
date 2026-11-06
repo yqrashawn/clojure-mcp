@@ -185,3 +185,23 @@
         (finally
           (dosync (commute @#'clojure.core/*loaded-libs* disj 'shadow.cljs.devtools.api))
           (remove-ns 'shadow.cljs.devtools.api))))))
+
+(deftest one-daemon-per-state-dir
+  (testing "a second daemon of the same version refuses to start instead of overwriting the first one's token"
+    (let [dir (temp-dir "daemon-state")
+          a (server/start! {:version "v" :state-dir dir :env {} :idle-exit-ms 3600000})]
+      (try
+        (let [b (try (server/start! {:version "v" :state-dir dir :env {} :idle-exit-ms 3600000})
+                     (catch clojure.lang.ExceptionInfo e e))]
+          (when (map? b) ((:stop! b)))
+          (is (instance? clojure.lang.ExceptionInfo b))
+          (is (= (:token a) (slurp (io/file dir "token"))))
+          (is (= (str (:port a)) (slurp (io/file dir "port")))))
+        (finally ((:stop! a)))))
+    (testing "and the dir is free again once the first one stops"
+      (let [dir (temp-dir "daemon-state")
+            a (server/start! {:version "v" :state-dir dir :env {} :idle-exit-ms 3600000})
+            _ ((:stop! a))
+            b (server/start! {:version "v" :state-dir dir :env {} :idle-exit-ms 3600000})]
+        ((:stop! b))
+        (is (some? (:port b)))))))

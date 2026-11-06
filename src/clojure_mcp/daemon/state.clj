@@ -4,7 +4,8 @@
    that its presence means the daemon is accepting connections."
   (:require [clojure.java.io :as io]
             [clojure.string :as string])
-  (:import (java.nio.file CopyOption Files StandardCopyOption)
+  (:import (java.nio.channels FileChannel OverlappingFileLockException)
+           (java.nio.file CopyOption Files OpenOption StandardCopyOption StandardOpenOption)
            (java.nio.file.attribute PosixFilePermissions)
            (java.security SecureRandom)))
 
@@ -22,6 +23,15 @@
 (defn ensure-dir! [dir]
   (.mkdirs (io/file dir))
   (chmod! dir "rwx------"))
+
+(defn lock!
+  "Takes `daemon.lock` for the life of this daemon, or returns nil when another
+   daemon of this version holds it. The OS drops it when the process dies."
+  [dir]
+  (let [ch (FileChannel/open (.toPath (io/file dir "daemon.lock"))
+                             (into-array OpenOption [StandardOpenOption/CREATE StandardOpenOption/WRITE]))]
+    (or (try (.tryLock ch) (catch OverlappingFileLockException _ nil))
+        (do (.close ch) nil))))
 
 (defn write-token!
   "Writes a fresh random token, readable by this user only, and returns it."

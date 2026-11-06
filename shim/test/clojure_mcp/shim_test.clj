@@ -45,6 +45,7 @@
                                                                  (json/generate-string {:jsonrpc "2.0" :id (:id msg)
                                                                                         :result {:tools [{:name "clojure_eval"}]}})
                                                                  "\n\n")}
+                      (= "die" (get-in msg [:params :name])) (server/as-channel req {:on-open server/close})
                       :else {:status 200 :headers {"content-type" "application/json"}
                              :body (json/generate-string {:jsonrpc "2.0" :id (:id msg) :result {:echo (:method msg)}})})))
         srv (server/run-server handler {:port 0 :ip "127.0.0.1" :legacy-return-value? false})]
@@ -207,3 +208,21 @@
       (spit (io/file dir "daemon.log") "earlier\n")
       @(shim/start-detached! dir ["sh" "-c" "echo out; echo err >&2"])
       (is (= "earlier\nout\nerr\n" (slurp (io/file dir "daemon.log")))))))
+
+(deftest daemon-dying-mid-call-answers-the-call
+  (testing "a connection dropped after the request reached the daemon is one failed call, not a hang"
+    (let [dir (temp-dir "state") fakes (atom [])
+          [n spawn!] (spawner dir fakes)
+          {:keys [send! recv! exits]} (harness {:state-dir dir :spawn! spawn!})]
+      (send! init-msg) (recv! 1000)
+      (send! {:jsonrpc "2.0" :id 2 :method "tools/call" :params {:name "die"}})
+      (let [resp (recv! 5000)]
+        (is (= 2 (:id resp)))
+        (is (= -32603 (get-in resp [:error :code]))))
+      (testing "the call is not retried (it may have run) and the shim keeps serving"
+        (is (= 1 (count (filter #(= "die" (get-in % [:msg :params :name])) @(:seen (first @fakes))))))
+        (send! {:jsonrpc "2.0" :id 3 :method "tools/call" :params {:name "x"}})
+        (is (= {:echo "tools/call"} (:result (recv! 5000))))
+        (is (= :running (deref exits 500 :running)))
+        (is (= 1 @n)))
+      (doseq [f @fakes] ((:stop! f))))))

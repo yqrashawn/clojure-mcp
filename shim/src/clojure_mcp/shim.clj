@@ -214,22 +214,34 @@
     (emit (json/generate-string {:jsonrpc "2.0" :id id :error {:code -32603 :message (ex-message t)}})))
   (future (Thread/sleep 500) (exit! 1)))
 
+(defn- lost!
+  "Answers a call whose connection broke after it reached the daemon."
+  [emit id ^Exception e]
+  (when id
+    (emit (json/generate-string {:jsonrpc "2.0" :id id
+                                 :error {:code -32603
+                                         :message (str "Lost the clojure-mcp daemon during this call: " (ex-message e))}}))))
+
 (defn- forward!
   "Sends one client message to the daemon and relays the answer. A refused
    connection (the request never reached a daemon) restarts the daemon and
-   is retried once; anything else is not, since a tool call may have run."
-  [{:keys [conn start-timeout-ms] :as ctx} line id]
+   is retried once; anything else is not, since a tool call may have run, and
+   is answered with an error."
+  [{:keys [conn emit start-timeout-ms] :as ctx} line id]
   (loop [retried? false]
     (let [p @conn
           c (deref p (+ start-timeout-ms 10000) (ex-info "clojure-mcp daemon connection timed out" {}))]
       (if (instance? Throwable c)
         (fail! ctx id c)
         (let [resp (try (http/post (:url c) {:headers (headers c) :body line :as :stream :throw false})
-                        (catch ConnectException e e))]
+                        (catch Exception e e))]
           (cond
-            (not (instance? ConnectException resp)) (relay-response! ctx resp id)
-            retried? (fail! ctx id resp)
-            :else (do (reconnect! ctx p) (recur true))))))))
+            (instance? ConnectException resp) (if retried?
+                                                (fail! ctx id resp)
+                                                (do (reconnect! ctx p) (recur true)))
+            (instance? Exception resp) (lost! emit id resp)
+            :else (try (relay-response! ctx resp id)
+                       (catch Exception e (lost! emit id e)))))))))
 
 (defn- listen!
   "Relays server->client messages from the session's GET stream, if the

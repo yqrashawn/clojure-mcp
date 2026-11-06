@@ -7,10 +7,11 @@
             [clojure.java.io :as io]
             [clojure.string :as string]
             [clojure.test :refer [deftest is testing]]
-            [clojure-mcp.config :as config]
             [clojure-mcp.daemon.registry :as registry]
-            [clojure-mcp.daemon.server :as server])
+            [clojure-mcp.daemon.server :as server]
+            [clojure-mcp.tools.agent-tool-builder.core :as agent-core])
   (:import (com.sun.net.httpserver HttpHandler HttpServer)
+           (dev.langchain4j.model.anthropic AnthropicChatModel)
            (dev.langchain4j.model.chat ChatModel)
            (java.net InetSocketAddress ServerSocket URI)
            (java.net.http HttpClient HttpRequest HttpRequest$BodyPublishers HttpResponse$BodyHandlers)
@@ -38,8 +39,18 @@
 (defn- dead-url []
   (str "http://127.0.0.1:" (with-open [s (ServerSocket. 0)] (.getLocalPort s))))
 
-(defn- rpc-session [daemon dir]
+(defn- env-id [daemon env]
+  (-> (.send (HttpClient/newHttpClient)
+             (-> (HttpRequest/newBuilder (URI. (str "http://127.0.0.1:" (:port daemon) "/env")))
+                 (.header "Authorization" (str "Bearer " (:token daemon)))
+                 (.POST (HttpRequest$BodyPublishers/ofString (json/write-str env)))
+                 (.build))
+             (HttpResponse$BodyHandlers/ofString))
+      .body json/read-str (get "id")))
+
+(defn- rpc-session [daemon dir & [env]]
   (let [http (HttpClient/newHttpClient)
+        eid (some->> env (env-id daemon))
         path (str "/p" dir "/mcp")
         ids (atom 0)
         sid (atom nil)
@@ -48,7 +59,8 @@
                                    (.header "Authorization" (str "Bearer " (:token daemon)))
                                    (.header "Accept" "application/json, text/event-stream")
                                    (.header "Content-Type" "application/json"))
-                         @sid (.header "Mcp-Session-Id" @sid))
+                         @sid (.header "Mcp-Session-Id" @sid)
+                         eid (.header "X-Clojure-Mcp-Env" eid))
                      r (.send http (.build (.POST b (HttpRequest$BodyPublishers/ofString (json/write-str body))))
                               (HttpResponse$BodyHandlers/ofString))]
                  (when-let [s (.orElse (.firstValue (.headers r) "mcp-session-id") nil)] (reset! sid s))
@@ -76,30 +88,54 @@
     (is (contains? names "clojure_eval"))
     (is (not-any? #(contains? names %) ["dispatch_agent" "architect" "code_critique" "clojure_edit_agent"]))))
 
-(defn- agent-model [entry id]
-  (get-in @(:nrepl-client-atom entry) [::config/config :tools-config id :model]))
+(defn- completions [seen]
+  (filter #(string/ends-with? (:path %) "/chat/completions") @seen))
 
 (deftest api-key-beats-cchp
-  (let [{:keys [url stop]} (fake-cchp)]
+  (testing "each session's agent gets its own model: a key in one session's env never serves another"
+    (let [{:keys [url seen stop]} (fake-cchp)
+          dir (temp-dir "p")
+          client (:nrepl-client-atom (registry/get-or-create! (registry/new-registry) dir))
+          agent-model (fn [env]
+                        (with-bindings (server/session-bindings env dir)
+                          (:model (agent-core/get-or-create-agent client {:id :t :name "t" :system-message "s"}))))]
+      (try
+        (is (instance? AnthropicChatModel (agent-model {"ANTHROPIC_API_KEY" "x" "CCHP_URL" url})))
+        (testing "without a key, the same project and agent get the cchp model"
+          (let [m (agent-model {"CCHP_URL" url})]
+            (is (not (instance? AnthropicChatModel m)))
+            (.chat ^ChatModel m "hi")
+            (is (= 1 (count (completions seen))))))
+        (testing "a session with the same env reuses its agent"
+          (is (identical? (agent-model {"CCHP_URL" url}) (agent-model {"CCHP_URL" url}))))
+        (finally (stop))))))
+
+(deftest keyless-session-gets-cchp-on-a-project-a-keyed-session-opened
+  (let [{:keys [url seen stop]} (fake-cchp)
+        dir (temp-dir "p")
+        d (server/start! {:version "v" :state-dir (temp-dir "state") :env {"CCHP_URL" url} :idle-exit-ms 3600000})]
     (try
-      (binding [config/*session-env* {"ANTHROPIC_API_KEY" "x" "CCHP_URL" url}]
-        (is (nil? (agent-model (registry/get-or-create! (registry/new-registry) (temp-dir "p")) :dispatch_agent))))
-      (testing "without a key, the same project gets the cchp model"
-        (binding [config/*session-env* {"CCHP_URL" url}]
-          (is (instance? ChatModel (agent-model (registry/get-or-create! (registry/new-registry) (temp-dir "p")) :dispatch_agent)))))
-      (finally (stop)))))
+      ((rpc-session d dir {"ANTHROPIC_API_KEY" "x" "CCHP_URL" url}) "tools/call" {:name "glob_files" :arguments {:pattern "*"}})
+      (let [{:keys [result]} ((rpc-session d dir {"CCHP_URL" url}) "tools/call" {:name "dispatch_agent" :arguments {:prompt "say hi"}})]
+        (is (not (:isError result)) (pr-str result))
+        (is (= 1 (count (completions seen)))))
+      (finally ((:stop! d)) (stop)))))
 
 (deftest project-model-beats-cchp
-  (let [{:keys [url stop]} (fake-cchp)
-        dir (temp-dir "p")]
+  (let [{:keys [url seen stop]} (fake-cchp)
+        mine (fake-cchp)
+        dir (temp-dir "p")
+        d (server/start! {:version "v" :state-dir (temp-dir "state") :env {"CCHP_URL" url} :idle-exit-ms 3600000})]
     (io/make-parents (io/file dir ".clojure-mcp" "config.edn"))
-    (spit (io/file dir ".clojure-mcp" "config.edn") "{:tools-config {:architect {:model :openai/o4-mini}}}")
+    (spit (io/file dir ".clojure-mcp" "config.edn")
+          (pr-str {:models {:openai/mine {:provider :openai :model-name "gpt-4o-mini" :api-key "k" :base-url (:url mine)}}
+                   :tools-config {:architect {:model :openai/mine}}}))
     (try
-      (binding [config/*session-env* {"CCHP_URL" url}]
-        (let [e (registry/get-or-create! (registry/new-registry) dir)]
-          (is (= :openai/o4-mini (agent-model e :architect)))
-          (is (instance? ChatModel (agent-model e :dispatch_agent)))))
-      (finally (stop)))))
+      (let [{:keys [result]} ((rpc-session d dir {"CCHP_URL" url}) "tools/call" {:name "architect" :arguments {:prompt "plan"}})]
+        (is (not (:isError result)) (pr-str result))
+        (is (= 1 (count (completions (:seen mine)))) "the project's model answered")
+        (is (empty? (completions seen)) "cchp was not called"))
+      (finally ((:stop! d)) (stop) ((:stop mine))))))
 
 (deftest dispatch-agent-reaches-cchp
   (let [{:keys [url seen stop]} (fake-cchp)

@@ -454,6 +454,12 @@
     (get *session-env* var-name)
     (System/getenv var-name)))
 
+(def ^:dynamic *agent-model-fallback*
+  "A no-arg fn giving the ChatModel for a sub-agent whose config names no model
+   when the caller's env has no provider key, or nil. Bound per call by the
+   daemon."
+  nil)
+
 (defn- get-env
   "Gets environment variable, checking *env-overrides* first for testing."
   [var-name]

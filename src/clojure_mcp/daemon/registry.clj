@@ -22,30 +22,19 @@
   "Environment variables that give the sub-agent tools a model of their own."
   ["ANTHROPIC_API_KEY" "GEMINI_API_KEY" "OPENAI_API_KEY"])
 
-(def ^:private agent-tool-ids [:dispatch_agent :architect :code_critique :clojure_edit_agent])
-
-(defn- with-cchp-agent-model
-  "Points the sub-agent tools at a local cchp, but only when the calling
-   session has no provider key and the project configured no model for that
-   tool: cchp is the fallback, never a replacement for a choice someone made."
-  [client dir]
-  (let [env (or config/*session-env* (System/getenv))
-        base (cchp/cchp-url env)]
-    (if (or (some #(not-empty (get env %)) provider-keys) (not (cchp/healthy? base)))
-      client
-      (let [model (cchp/create-chat-model {:base-url base :workspace-root dir})]
-        (reduce (fn [c id]
-                  (cond-> c
-                    (nil? (get-in c [::config/config :tools-config id :model]))
-                    (assoc-in [::config/config :tools-config id :model] model)))
-                client
-                agent-tool-ids)))))
+(defn cchp-agent-model
+  "A model that runs sub-agents through the local cchp in `dir`, if it answers.
+   Only reached for a sub-agent whose config names no model and a session
+   whose `env` has no provider key: cchp is the fallback, never a replacement
+   for a choice someone made."
+  [env dir]
+  (let [base (cchp/cchp-url env)]
+    (when (cchp/healthy? base)
+      (cchp/create-chat-model {:base-url base :workspace-root dir}))))
 
 (defn- build-entry [dir port]
-  (let [client-atom (atom (with-cchp-agent-model
-                            (core/create-and-start-nrepl-connection
-                             (cond-> {:project-dir dir} port (assoc :port port)))
-                            dir))]
+  (let [client-atom (atom (core/create-and-start-nrepl-connection
+                           (cond-> {:project-dir dir} port (assoc :port port))))]
     {:dir dir
      :nrepl-client-atom client-atom
      :tool-fns (into {} (map (juxt :name :tool-fn)) (tools/build-all-tools client-atom))
@@ -68,8 +57,8 @@
         touch! (fn [entry]
                  (swap! registry #(cond-> % (contains? % dir) (assoc-in [dir :last-used] (Instant/now))))
                  entry)]
-    (if (current? (get @registry dir) (ports/read-nrepl-port-file dir))
-      (touch! (get @registry dir))
+    (if-let [entry (let [e (get @registry dir)] (when (current? e (ports/read-nrepl-port-file dir)) e))]
+      (touch! entry)
       (let [lock (.computeIfAbsent build-locks dir (reify Function (apply [_ _] (Object.))))]
         (locking lock
           (let [entry (get @registry dir)

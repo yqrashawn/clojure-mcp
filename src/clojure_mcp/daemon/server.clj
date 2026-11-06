@@ -70,6 +70,13 @@
             ctx (cond-> {} dir (assoc "project-dir" dir) env (assoc "env" env))]
         (if (seq ctx) (McpTransportContext/create ctx) McpTransportContext/EMPTY)))))
 
+(defn session-bindings
+  "The bindings a tool call for `dir` runs under, for a session whose env is
+   `env`."
+  [env dir]
+  {#'config/*session-env* env
+   #'config/*agent-model-fallback* #(registry/cchp-agent-model env dir)})
+
 (defn- dispatcher
   "A tool-fn that runs `tool-name` for the calling project, under the calling
    session's forwarded env (or `daemon-env` when the session sent none)."
@@ -81,7 +88,7 @@
       (try
         (if-not dir
           (k ["Connect through /p/<absolute project dir>/mcp: this daemon serves many projects and the URL says which one."] true)
-          (binding [config/*session-env* env]
+          (with-bindings (session-bindings env dir)
             (let [entry (registry/get-or-create! registry dir)]
               (when (zero? (mod (swap! calls inc) (:every eviction)))
                 (future (registry/evict-stale! registry eviction)))
@@ -148,7 +155,10 @@
    delivered once the server is down (idle exit or stop!)."
   [{:keys [version state-dir env idle-exit-ms]}]
   (state/ensure-dir! state-dir)
-  (let [token (state/write-token! state-dir)
+  (let [lock (or (state/lock! state-dir)
+                 (throw (ex-info (str "Another clojure-mcp daemon " version " is already running from " state-dir)
+                                 {:state-dir state-dir})))
+        token (state/write-token! state-dir)
         port (promise)
         last-activity (atom (System/currentTimeMillis))
         envs (atom {})
@@ -186,6 +196,7 @@
                   (try (.block (.closeGracefully mcp-server) (Duration/ofSeconds 3))
                        (catch Exception e (log/warn e "MCP server did not close cleanly")))
                   (.stop server)
+                  (.close (.channel ^java.nio.channels.FileLock lock))
                   (deliver stopped true)))]
     (.addConnector server connector)
     (.setHandler server ctx)
