@@ -12,6 +12,7 @@
             [clojure.string :as string]
             [clojure-mcp.agent.cchp-model :as cchp]
             [clojure-mcp.config :as config]
+            [clojure-mcp.config.schema :as schema]
             [clojure-mcp.core :as core]
             [clojure-mcp.daemon.registry :as registry]
             [clojure-mcp.daemon.state :as state]
@@ -105,7 +106,10 @@
   [env]
   (let [dir (.toFile (Files/createTempDirectory "clojure-mcp-daemon" (make-array FileAttribute 0)))]
     (try
-      (cond->> (tools/build-all-tools (atom (core/create-and-start-nrepl-connection {:project-dir (str dir)})))
+      ;; like registry entries: [:env] refs are a session's business, not the
+      ;; starting shell's
+      (cond->> (tools/build-all-tools (atom (binding [schema/*validate-env-vars* false]
+                                              (core/create-and-start-nrepl-connection {:project-dir (str dir)}))))
         (not (agent-backend-available? env)) (remove #(agent-tool-names (:name %))))
       (finally (.delete dir)))))
 

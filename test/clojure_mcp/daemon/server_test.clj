@@ -212,3 +212,17 @@
             b (server/start! {:version "v" :state-dir dir :env {} :idle-exit-ms 3600000})]
         ((:stop! b))
         (is (some? (:port b)))))))
+
+(deftest starts-whatever-env-the-home-config-refers-to
+  (testing "an [:env VAR] ref in the home config the starting shell lacks does not stop the daemon: sessions that have VAR still need it"
+    (let [home (temp-dir "home")
+          old-home (System/getProperty "user.home")]
+      (io/make-parents (io/file home ".clojure-mcp" "config.edn"))
+      (spit (io/file home ".clojure-mcp" "config.edn")
+            (pr-str {:models {:openai/mine {:model-name "gpt-4o-mini" :api-key [:env "ZZ_NOT_IN_THE_STARTING_SHELL"]}}}))
+      (System/setProperty "user.home" home)
+      (try
+        (let [d (server/start! {:version "v" :state-dir (temp-dir "daemon-state") :env {} :idle-exit-ms 3600000})]
+          ((:stop! d))
+          (is (some? (:port d))))
+        (finally (System/setProperty "user.home" old-home))))))
