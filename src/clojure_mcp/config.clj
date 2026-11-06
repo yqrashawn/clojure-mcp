@@ -438,6 +438,22 @@
    When non-nil, will be checked before System/getenv."
   nil)
 
+(def ^:dynamic *session-env*
+  "The environment of the MCP client a tool call came from, bound per call by
+   the daemon (one JVM serves sessions started from different shells). nil
+   outside the daemon. Reads made on the caller's behalf go through
+   `caller-env`."
+  nil)
+
+(defn caller-env
+  "Environment variable as the calling client sees it: from *session-env* when
+   bound (absent there means unset, never the daemon's own value), else
+   System/getenv."
+  [var-name]
+  (if *session-env*
+    (get *session-env* var-name)
+    (System/getenv var-name)))
+
 (defn- get-env
   "Gets environment variable, checking *env-overrides* first for testing."
   [var-name]
