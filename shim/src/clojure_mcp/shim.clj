@@ -91,13 +91,17 @@
                            {:git/url "https://github.com/yqrashawn/clojure-mcp" :git/sha sha}))})
    "-X" "clojure-mcp.daemon/start" ":version" (pr-str version)])
 
+(defn start-detached!
+  "Runs `cmd` (argv) in `dir`, detached from this process's stdio, appending
+   its output to daemon.log there."
+  [dir cmd]
+  (let [log (io/file dir "daemon.log")]
+    (apply p/process {:dir dir :out :append :out-file log :err :append :err-file log} cmd)))
+
 (defn- spawn-daemon!
-  "Starts the daemon detached from this process's stdio, logging to
-   daemon.log. It outlives the shim: other sessions share it."
+  "Starts the daemon. It outlives the shim: other sessions share it."
   [{:keys [state-dir version] :as ctx}]
-  (let [log (io/file state-dir "daemon.log")]
-    (p/process {:dir state-dir :out :append :out-file log :err :append :err-file log}
-               (daemon-command ctx version))))
+  (start-detached! state-dir (daemon-command ctx version)))
 
 (defn- log-tail [state-dir n]
   (let [f (io/file state-dir "daemon.log")]

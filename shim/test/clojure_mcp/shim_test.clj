@@ -200,3 +200,10 @@
     (let [del (first (filter #(= :delete (:method %)) @(:seen (first @fakes))))]
       (is (= (:sid (first @fakes)) (get-in del [:headers "mcp-session-id"]))))
     (doseq [f @fakes] ((:stop! f)))))
+
+(deftest start-detached-runs-the-command-into-the-log
+  (testing "the real spawn path (the other tests inject spawn!) runs the command as argv, appending to daemon.log"
+    (let [dir (temp-dir "state")]
+      (spit (io/file dir "daemon.log") "earlier\n")
+      @(shim/start-detached! dir ["sh" "-c" "echo out; echo err >&2"])
+      (is (= "earlier\nout\nerr\n" (slurp (io/file dir "daemon.log")))))))
