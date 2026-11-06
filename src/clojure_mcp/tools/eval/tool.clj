@@ -4,17 +4,19 @@
    [clojure-mcp.tool-system :as tool-system]
    [clojure-mcp.tools.eval.core :as core]
    [clojure-mcp.config :as config]
-   [clojure-mcp.nrepl :as nrepl]))
+   [clojure-mcp.nrepl :as nrepl]
+   [clojure-mcp.tools.eval.deadline :as deadline]))
 
 ;; Factory function to create the tool configuration
 (defn create-eval-tool
   "Creates the evaluation tool configuration"
   ([nrepl-client-atom]
    (create-eval-tool nrepl-client-atom {}))
-  ([nrepl-client-atom {:keys [session-type] :as _config}]
+  ([nrepl-client-atom {:keys [session-type deadline-grace-ms] :as _config}]
    (cond-> {:tool-type ::clojure-eval
             :nrepl-client-atom nrepl-client-atom
-            :timeout 20000}
+            :timeout 20000
+            :deadline-grace-ms (or deadline-grace-ms deadline/default-grace-ms)}
      session-type (assoc :session-type session-type))))
 
 ;; Implement the required multimethods for the eval tool
@@ -88,36 +90,41 @@ Examples:
       ;; Return inputs with resolved port
       (assoc inputs :port effective-port))))
 
-(defmethod tool-system/execute-tool ::clojure-eval [{:keys [nrepl-client-atom timeout session-type]}
+(defmethod tool-system/execute-tool ::clojure-eval [{:keys [nrepl-client-atom timeout session-type deadline-grace-ms]}
                                                     {:keys [timeout_ms port] :as inputs}]
   ;; port is already resolved by validate-inputs
   (let [base-client @nrepl-client-atom
         session-type (or session-type :default)]
-    (try
-      (let [client (nrepl/with-port-initialized base-client port)
-            env-type (nrepl/get-port-env-type client)
-            show-shadow-msg? (config/get-shadow-cljs-repl-message base-client)
-            ;; Check CLJS mode for shadow-cljs (skip probe if message disabled)
-            cljs-mode? (when (and (= env-type :shadow) show-shadow-msg?)
-                         (nrepl/shadow-cljs-mode? client session-type))
-            ;; Execute the eval
-            eval-result (core/evaluate-with-repair client (cond-> inputs
-                                                            session-type (assoc :session-type session-type)
-                                                            (nil? timeout_ms) (assoc :timeout_ms timeout)))]
-        ;; Add context to result for formatting
-        (assoc eval-result :context {:env-type env-type
-                                     :shadow-cljs-mode? cljs-mode?
-                                     :show-shadow-message? show-shadow-msg?}))
-      (catch java.net.ConnectException e
-        {:outputs [[:err (format "Failed to connect to nREPL server on port %d: %s. Ensure an nREPL server is running on that port."
-                                 port (.getMessage e))]]
-         :error true
-         :context nil})
-      (catch java.net.SocketException e
-        {:outputs [[:err (format "Connection error to nREPL server on port %d: %s. The server may have disconnected."
-                                 port (.getMessage e))]]
-         :error true
-         :context nil}))))
+    (deadline/call-with-deadline
+     "clojure_eval"
+     (deadline/deadline-ms (or timeout_ms timeout)
+                           (or deadline-grace-ms deadline/default-grace-ms))
+     (fn []
+       (try
+         (let [client (nrepl/with-port-initialized base-client port)
+               env-type (nrepl/get-port-env-type client)
+               show-shadow-msg? (config/get-shadow-cljs-repl-message base-client)
+               ;; Check CLJS mode for shadow-cljs (skip probe if message disabled)
+               cljs-mode? (when (and (= env-type :shadow) show-shadow-msg?)
+                            (nrepl/shadow-cljs-mode? client session-type))
+               ;; Execute the eval
+               eval-result (core/evaluate-with-repair client (cond-> inputs
+                                                               session-type (assoc :session-type session-type)
+                                                               (nil? timeout_ms) (assoc :timeout_ms timeout)))]
+           ;; Add context to result for formatting
+           (assoc eval-result :context {:env-type env-type
+                                        :shadow-cljs-mode? cljs-mode?
+                                        :show-shadow-message? show-shadow-msg?}))
+         (catch java.net.ConnectException e
+           {:outputs [[:err (format "Failed to connect to nREPL server on port %d: %s. Ensure an nREPL server is running on that port."
+                                    port (.getMessage e))]]
+            :error true
+            :context nil})
+         (catch java.net.SocketException e
+           {:outputs [[:err (format "Connection error to nREPL server on port %d: %s. The server may have disconnected."
+                                    port (.getMessage e))]]
+            :error true
+            :context nil}))))))
 
 (defmethod tool-system/format-results ::clojure-eval [_ {:keys [outputs error repaired context] :as _eval-result}]
   ;; The core implementation returns :outputs, :error, :repaired, and :context
