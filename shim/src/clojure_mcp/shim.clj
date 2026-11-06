@@ -16,7 +16,7 @@
             [babashka.process :as p]
             [cheshire.core :as json]
             [clojure.java.io :as io]
-            [clojure.string :as str])
+            [clojure.string :as string])
   (:import (java.io BufferedReader File InputStream)
            (java.net ConnectException URLEncoder)
            (java.nio.channels FileChannel)
@@ -45,13 +45,13 @@
    literal (Jetty refuses %2F)."
   [dir]
   (str "/p"
-       (str/join (map #(str "/" (str/replace (URLEncoder/encode ^String % "UTF-8") "+" "%20"))
-                      (remove str/blank? (str/split dir #"/"))))
+       (string/join (map #(str "/" (string/replace (URLEncoder/encode ^String % "UTF-8") "+" "%20"))
+                      (remove string/blank? (string/split dir #"/"))))
        "/mcp"))
 
 (defn- sha256-hex [^String s]
   (let [d (.digest (MessageDigest/getInstance "SHA-256") (.getBytes s "UTF-8"))]
-    (str/join (map #(format "%02x" %) d))))
+    (string/join (map #(format "%02x" %) d))))
 
 (defn version
   "The daemon version this shim needs: the pinned sha, or for a local
@@ -66,7 +66,7 @@
                   (str (System/getProperty "user.home") "/.cache"))]
     (str (io/file cache "clojure-mcp" "daemons" version))))
 
-(defn- slurp-trim [f] (str/trim (slurp f)))
+(defn- slurp-trim [f] (string/trim (slurp f)))
 
 (defn live-daemon
   "{:port :token} of a daemon of `version` answering in `dir`, else nil."
@@ -102,7 +102,7 @@
 (defn- log-tail [state-dir n]
   (let [f (io/file state-dir "daemon.log")]
     (if (.exists f)
-      (str/join "\n" (take-last n (str/split-lines (slurp f))))
+      (string/join "\n" (take-last n (string/split-lines (slurp f))))
       "(no daemon.log)")))
 
 (defn- try-lock
@@ -151,8 +151,8 @@
     (loop [data []]
       (when-let [line (.readLine r)]
         (cond
-          (str/blank? line) (do (when (seq data) (f (str/join "\n" data))) (recur []))
-          (str/starts-with? line "data:") (recur (conj data (str/triml (subs line 5))))
+          (string/blank? line) (do (when (seq data) (f (string/join "\n" data))) (recur []))
+          (string/starts-with? line "data:") (recur (conj data (string/triml (subs line 5))))
           :else (recur data))))))
 
 (defn- relay-response!
@@ -162,8 +162,8 @@
         status (:status resp)]
     (cond
       (= 202 status) (some-> ^InputStream (:body resp) .close)
-      (and (= 200 status) (str/starts-with? ctype "text/event-stream")) (sse-messages (:body resp) emit)
-      (= 200 status) (let [body (str/trim (slurp (:body resp)))] (when (seq body) (emit body)))
+      (and (= 200 status) (string/starts-with? ctype "text/event-stream")) (sse-messages (:body resp) emit)
+      (= 200 status) (let [body (string/trim (slurp (:body resp)))] (when (seq body) (emit body)))
       :else (let [body (slurp (:body resp))]
               (when id
                 (emit (json/generate-string {:jsonrpc "2.0" :id id
@@ -230,7 +230,7 @@
 (defn- listen!
   "Relays server->client messages from the session's GET stream, if the
    daemon offers one."
-  [{:keys [conn emit running] :as ctx}]
+  [{:keys [conn emit running]}]
   (future
     (loop []
       (when @running
@@ -252,13 +252,13 @@
   [opts]
   (assoc opts :conn (atom nil) :init (atom nil) :lock (Object.) :running (atom true)))
 
-(defn run!
+(defn relay!
   "Relays until stdin ends, then closes the daemon session and exits 0."
   [{:keys [read-line emit exit! conn init running version] :as ctx}]
   (loop []
     (if-let [line (read-line)]
       (do
-        (when-not (str/blank? line)
+        (when-not (string/blank? line)
           (let [msg (try (json/parse-string line true) (catch Exception _ nil))]
             (case (:method msg)
               "initialize"
@@ -316,4 +316,4 @@
                                :exit! #(System/exit %)}))]
       (if warm?
         (do (println (:port (ensure-daemon! ctx))) (System/exit 0))
-        (run! ctx)))))
+        (relay! ctx)))))

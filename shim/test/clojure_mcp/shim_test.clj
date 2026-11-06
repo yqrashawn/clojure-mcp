@@ -5,7 +5,7 @@
    against fake daemons that speak the daemon <-> shim contract."
   (:require [cheshire.core :as json]
             [clojure.java.io :as io]
-            [clojure.string :as str]
+            [clojure.string :as string]
             [clojure.test :refer [deftest is testing]]
             [clojure-mcp.shim :as shim]
             [org.httpkit.server :as server])
@@ -25,7 +25,7 @@
         sid (str "sid-" (rand-int 1000000))
         handler (fn [req]
                   (let [body (some-> (:body req) slurp)
-                        msg (when-not (str/blank? body) (json/parse-string body true))]
+                        msg (when-not (string/blank? body) (json/parse-string body true))]
                     (swap! seen conj {:method (:request-method req) :uri (:uri req)
                                       :headers (:headers req) :msg msg})
                     (cond
@@ -64,7 +64,7 @@
                            :read-line #(let [l (.take in)] (when-not (= ::eof l) l))
                            :emit #(.put out %)
                            :exit! #(deliver exits %)})]
-    (future (shim/run! ctx))
+    (future (shim/relay! ctx))
     {:send! #(.put in (json/generate-string %))
      :recv! (fn [ms] (some-> (.poll out ms TimeUnit/MILLISECONDS) (json/parse-string true)))
      :eof! #(.put in ::eof)
@@ -128,7 +128,7 @@
     (is (= 2 (:id (recv! 5000))) "SSE response")
     (send! {:jsonrpc "2.0" :id 3 :method "tools/call" :params {:name "x"}})
     (is (= {:echo "tools/call"} (:result (recv! 5000))) "JSON response")
-    (let [posts (filter #(and (= :post (:method %)) (str/ends-with? (:uri %) "/mcp")) @(:seen (first @fakes)))]
+    (let [posts (filter #(and (= :post (:method %)) (string/ends-with? (:uri %) "/mcp")) @(:seen (first @fakes)))]
       (testing "the client's own initialize is replayed to the daemon, once"
         (is (= 1 (count (filter #(= "initialize" (get-in % [:msg :method])) posts)))))
       (testing "requests go to the project's path with the daemon session"
@@ -146,7 +146,7 @@
           env-post (first (filter #(= "/env" (:uri %)) seen))]
       (is (= (System/getenv "PATH") (get-in env-post [:msg :PATH])) "the shim's own env is forwarded")
       (is (every? #(= "envid" (get-in % [:headers "x-clojure-mcp-env"]))
-                  (filter #(str/ends-with? (:uri %) "/mcp") seen))))
+                  (filter #(string/ends-with? (:uri %) "/mcp") seen))))
     (doseq [f @fakes] ((:stop! f)))))
 
 (deftest daemon-restart-is-transparent
@@ -161,7 +161,7 @@
     (is (= 2 @n))
     (testing "the new daemon got the session replayed before the call"
       (is (= ["initialize" "notifications/initialized" "tools/call"]
-             (keep #(get-in % [:msg :method]) (filter #(str/ends-with? (:uri %) "/mcp") @(:seen (second @fakes)))))))
+             (keep #(get-in % [:msg :method]) (filter #(string/ends-with? (:uri %) "/mcp") @(:seen (second @fakes)))))))
     (doseq [f @fakes] ((:stop! f)))))
 
 (deftest concurrent-cold-start-spawns-once
@@ -186,7 +186,7 @@
     (send! {:jsonrpc "2.0" :id 2 :method "tools/list"})
     (let [resp (recv! 6000)]
       (is (= 2 (:id resp)))
-      (is (str/includes? (get-in resp [:error :message]) "boom line")))
+      (is (string/includes? (get-in resp [:error :message]) "boom line")))
     (is (= 1 (deref exits 3000 :no-exit)))))
 
 (deftest stdin-eof-deletes-session
