@@ -128,6 +128,10 @@ The full toolkit (what you get with no `:config-profile`) is organized by catego
 |-----------|-------------|---------------|
 | `clojure_eval` | Evaluates Clojure code in the current namespace; supports optional `port` parameter for multi-REPL workflows | Testing expressions, connecting to different REPLs |
 | `list_nrepl_ports` | Discovers running nREPL servers on the machine | Finding available REPLs to connect to |
+| `cljs_eval` | Evaluates ClojureScript in a shadow-cljs build's live runtime (browser or Node) via the one-shot `cljs-eval` API | Inspecting app state, driving a running cljs app |
+| `cljs_build_status` | Last compile result of a shadow-cljs build: status, warnings, error report | Seeing a cljs compile error |
+| `cljs_project_state` | Active shadow-cljs builds and their connected runtimes | Finding a `build` or `runtime_id` for `cljs_eval` |
+| `cljs_list_ns` | Namespaces in a shadow-cljs build's compiler, filterable by regex | Finding the real name of a cljs namespace |
 | `bash` | Execute shell commands on the host system | Running tests, git commands, file operations |
 
 ### File Editing Tools

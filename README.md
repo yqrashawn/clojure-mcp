@@ -117,7 +117,9 @@ provides a shell-based nREPL client and a delimiter-repair hook instead.
 
 ### Working with Multiple REPLs
 
-With `list_nrepl_ports`, the agent can discover both your Clojure and shadow-cljs REPLs simultaneously. The tool identifies which REPLs are shadow-cljs instances, allowing the agent to evaluate on either REPL using `clojure_eval` with the appropriate `port` parameter.
+With `list_nrepl_ports`, the agent can discover both your Clojure and shadow-cljs REPLs simultaneously, including the port shadow-cljs writes to `.shadow-cljs/nrepl.port`. The tool identifies which REPLs are shadow-cljs instances, allowing the agent to evaluate on either REPL using `clojure_eval` with the appropriate `port` parameter.
+
+The full toolkit also has shadow-cljs tools: `cljs_eval` evaluates ClojureScript in a build's live runtime (browser or Node) with no nested REPL, `cljs_build_status` shows a build's last compile result and warnings, `cljs_project_state` lists active builds and connected runtimes, and `cljs_list_ns` lists a build's namespaces. Their `port` defaults to `.shadow-cljs/nrepl.port` and their `build` to [`:cljs-build`](CONFIG.md#cljs-build) or the only active build.
 
 ### Older CLI profiles
 
