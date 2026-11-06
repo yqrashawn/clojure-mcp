@@ -16,6 +16,11 @@
   (let [version (str version)
         dir (state/state-dir (or state-root (state/default-root)) version)]
     (state/ensure-dir! dir)
+    ;; Spawned from one client's shell, it shares that shell's process group:
+    ;; a Ctrl-C or a closed terminal there must not take it from every other
+    ;; session. It still stops on TERM, and by itself when idle.
+    (doseq [sig ["INT" "HUP"]]
+      (sun.misc.Signal/handle (sun.misc.Signal. sig) sun.misc.SignalHandler/SIG_IGN))
     (logging/configure-logging! {:log-file (str dir "/daemon.log") :enable-logging? true :log-level :info})
     (let [{:keys [stopped]} (server/start! {:version version
                                             :state-dir dir
