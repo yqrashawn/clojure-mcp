@@ -4,6 +4,7 @@
    silently evaluate in another worktree's JVM."
   (:require [clojure.java.io :as io]
             [clojure.test :refer [deftest is testing]]
+            [clojure-mcp.config :as config]
             [clojure-mcp.core :as core]
             [clojure-mcp.daemon.registry :as registry]
             [clojure-mcp.tools.nrepl-ports.core :as ports])
@@ -81,3 +82,15 @@
       (let [entry (with-redefs [ports/read-nrepl-port-file (fn [d] (reset! reg {}) (read-port d))]
                     (registry/get-or-create! reg dir))]
         (is (= dir (:dir entry)))))))
+
+(deftest entry-does-not-depend-on-the-first-sessions-env
+  (testing "an [:env VAR] ref is not checked when the shared entry is built: the session that arrives first must not decide for the others"
+    (let [dir (temp-dir)]
+      (io/make-parents (io/file dir ".clojure-mcp" "config.edn"))
+      (spit (io/file dir ".clojure-mcp" "config.edn")
+            (pr-str {:models {:openai/mine {:model-name "gpt-4o-mini" :api-key [:env "ZZ_ONLY_SOME_SESSIONS"]}}}))
+      (let [entry (binding [config/*session-env* {}]
+                    (registry/get-or-create! (registry/new-registry) dir))]
+        (is (= dir (:dir entry)))
+        (is (= [:env "ZZ_ONLY_SOME_SESSIONS"]
+               (get-in (config/get-config @(:nrepl-client-atom entry) :models) [:openai/mine :api-key])))))))

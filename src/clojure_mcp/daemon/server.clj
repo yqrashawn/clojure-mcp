@@ -94,7 +94,8 @@
                 (future (registry/evict-stale! registry eviction)))
               (if (registry/tool-enabled? entry tool-name)
                 ((get (:tool-fns entry) tool-name) exchange args k)
-                (k [(str tool-name " is disabled by " dir "/.clojure-mcp/config.edn")] true)))))
+                (k [(str tool-name " is disabled for " dir " by its .clojure-mcp/config.edn"
+                         " or by ENABLE_TOOLS / DISABLE_TOOLS in this session's environment")] true)))))
         (catch Exception e
           (log/error e "Dispatch failed:" tool-name dir)
           (k [(str "Could not serve " tool-name " for " dir ": " (ex-message e))] true))))))
