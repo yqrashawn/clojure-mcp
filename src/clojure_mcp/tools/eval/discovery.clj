@@ -96,16 +96,11 @@
       (log/warn t "start-repl-hints probe threw; returning configured hints only")
       (vec configured-hints))))
 
-(defn- port-scan-text
-  "The list_nrepl_ports listing for `dir`, or nil when the scan fails. An
-   empty scan is stated plainly: list_nrepl_ports' own empty answer suggests a
-   bare nREPL command, which would start a REPL without the project's aliases."
+(defn- port-scan
+  "The nREPL servers list_nrepl_ports sees from `dir`, or nil when the scan fails."
   [dir]
   (try
-    (let [result (ports/discover-nrepl-ports dir)]
-      (if (empty? result)
-        "No nREPL servers are running."
-        (string/join "\n" (:result (tool-system/format-results {:tool-type :list-nrepl-ports} result)))))
+    (ports/discover-nrepl-ports dir)
     (catch Exception e
       (log/warn e "nREPL port scan failed")
       nil)))
@@ -113,26 +108,39 @@
 (defn no-nrepl-help
   "Eval-style error result for a clojure_eval call with no resolvable port:
    the running REPLs, the cross-worktree warning, and how to start this
-   project's REPL."
+   project's REPL. An empty scan is stated plainly: list_nrepl_ports' own
+   empty answer suggests a bare nREPL command, which would start a REPL
+   without the project's aliases."
   [nrepl-client-map project-dir]
-  (let [scan (port-scan-text project-dir)
+  (let [found (port-scan project-dir)
+        live (filter :valid found)
+        scan (cond
+               (nil? found) nil
+               (empty? live) "No nREPL servers are running."
+               :else (string/join "\n" (:result (tool-system/format-results {:tool-type :list-nrepl-ports} found))))
         hints (start-repl-hints project-dir (config/get-start-repl-hints nrepl-client-map))
+        start (if (seq hints)
+                (str "This project provides: " (string/join " | " hints)
+                     ". In your own worktree that is yours to start and the expected first step; "
+                     "ask first only when the REPL you would be attaching to is shared, such as a "
+                     "production JVM or one in a directory that is not this project's.")
+                (str "No start command was found in this project's repl.sh, bb.edn, deps.edn, "
+                     "shadow-cljs.edn or project.clj: check its README for how it starts its REPL."))
         guidance (str "No nREPL was auto-discovered for working dir: " project-dir
                       " (no .nrepl-port there, and no `port` arg given). "
-                      "Pick a port from the running REPLs listed above and retry `clojure_eval` "
-                      "with `port: <n>` (for ClojureScript, use `cljs_eval` against the shadow-cljs nREPL). "
-                      "The listing groups by the directory that owns each REPL, and a port under "
-                      "another worktree belongs to another agent's JVM: evaluating there reloads THEIR "
-                      "code, silently. Before the first real eval on a port you did not read out of this "
-                      "project's own port files, confirm it with (System/getProperty \"user.dir\") and "
-                      "check that the answer is INSIDE this project."
-                      (when (seq hints)
-                        (str "\n\nIf none of those belong to this project, no REPL is running for it yet: "
-                             "start one and retry. This project provides: "
-                             (string/join " | " hints)
-                             ". In your own worktree that is yours to start and the expected first step; "
-                             "ask first only when the REPL you would be attaching to is shared, such as a "
-                             "production JVM or one in a directory that is not this project's.")))]
+                      (if (seq live)
+                        (str "Pick a port from the running REPLs listed above and retry `clojure_eval` "
+                             "with `port: <n>` (for ClojureScript, use `cljs_eval` against the shadow-cljs nREPL). "
+                             "The listing groups by the directory that owns each REPL, and a port under "
+                             "another worktree belongs to another agent's JVM: evaluating there reloads THEIR "
+                             "code, silently. Before the first real eval on a port you did not read out of this "
+                             "project's own port files, confirm it with (System/getProperty \"user.dir\") and "
+                             "check that the answer is INSIDE this project."
+                             "\n\nIf none of those belong to this project, no REPL is running for it yet: "
+                             "start one and retry. ")
+                        (str "No running REPL was found: start this project's REPL, then retry "
+                             "(for ClojureScript, `cljs_eval` reads the shadow-cljs port file once it runs). "))
+                      start)]
     {:outputs (cond-> []
                 scan (conj [:err scan])
                 true (conj [:err guidance]))
