@@ -97,11 +97,15 @@
       (vec configured-hints))))
 
 (defn- port-scan-text
-  "The list_nrepl_ports listing for `dir`, or nil when the scan fails."
+  "The list_nrepl_ports listing for `dir`, or nil when the scan fails. An
+   empty scan is stated plainly: list_nrepl_ports' own empty answer suggests a
+   bare nREPL command, which would start a REPL without the project's aliases."
   [dir]
   (try
     (let [result (ports/discover-nrepl-ports dir)]
-      (string/join "\n" (:result (tool-system/format-results {:tool-type :list-nrepl-ports} result))))
+      (if (empty? result)
+        "No nREPL servers are running."
+        (string/join "\n" (:result (tool-system/format-results {:tool-type :list-nrepl-ports} result)))))
     (catch Exception e
       (log/warn e "nREPL port scan failed")
       nil)))
