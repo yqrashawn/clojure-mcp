@@ -164,7 +164,18 @@ for cchp to consume the fork later.
   a bearer header, and the daemon rejects requests without it. It also
   checks that `Host` is `127.0.0.1:<port>`/`localhost:<port>` and that no
   browser `Origin` is present. This blocks browser pages and DNS rebinding
-  from reaching eval, `bash` and file writes.
+  from reaching eval, `bash` and file writes. **Agents never see the token**:
+  agent ↔ shim is stdio, and only the shim reads the token file and attaches
+  it to the HTTP requests it relays. The tools and their arguments are
+  unchanged. It guards a new exposure: nREPL's bencode protocol cannot be
+  spoken by a browser, but an HTTP daemon can. Other processes of the same
+  OS user can still read the file. That is the same trust level nREPL
+  already has.
+- "Per fork version" means per pinned git sha. Each project's config pins
+  the fork's sha, and a shim must reach a daemon running exactly that code.
+  Normally every project pins the same sha, so there is one daemon. After a
+  pin bump, the new sha gets a fresh daemon and the old one exits once idle,
+  so no live session is restarted underneath.
 
 ### 3. bb stdio shim
 
@@ -204,6 +215,13 @@ for cchp to consume the fork later.
   modeled on cchp's `chat_model_adapter.clj`). It POSTs to
   `<cchp-url>/v1/chat/completions` with `model` (default `sonnet`) and
   `metadata.workspace_root = <project dir>`, and returns the reply text.
+- **Why the default is `localhost`, not a fixed host such as studio**: cchp
+  runs Claude Code in `workspace_root` **on the cchp machine's own disk**. A
+  remote cchp would edit its own copy of that path, not the caller's checkout,
+  or fail if the path doesn't exist there. On studio, `localhost:8033` *is*
+  studio's cchp. On mbp it is mbp's. Teammates have no cchp, and studio's is
+  behind Cloudflare Access for the operator only. For them the agent tools
+  stay off unless they configure an API key.
 - **Behavioral caveat**, the same as cchp today: cchp ignores client tools,
   so the "agent" is a Claude Code process acting with its own tools in the
   project dir, not a LangChain4j loop over clojure-mcp's tools.
@@ -222,7 +240,9 @@ for cchp to consume the fork later.
 
 ## Delivery
 
-Done in order, in this run (operator's pick):
+Done in order, in this run (operator's pick). I open each PR; auto review
+and cchp auto-merge take it from there. The zgh PR pins the fork sha only
+after fork PR 2 is merged.
 
 1. **Fork PR 1**: §1 runtime tools, deadline, discovery help,
    `.shadow-cljs/nrepl.port` support, `:start-repl-hint`, `:cljs-build`.
