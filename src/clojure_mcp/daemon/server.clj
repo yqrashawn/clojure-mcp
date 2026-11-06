@@ -10,6 +10,7 @@
   (:require [clojure.data.json :as json]
             [clojure.java.io :as io]
             [clojure.string :as string]
+            [clojure-mcp.agent.cchp-model :as cchp]
             [clojure-mcp.config :as config]
             [clojure-mcp.core :as core]
             [clojure-mcp.daemon.registry :as registry]
@@ -39,10 +40,13 @@
 (def ^:private eviction {:ttl-ms 1800000 :max-entries 50 :every 100})
 
 (defn agent-backend-available?
-  "Whether the sub-agent tools have a model to call, judged from the daemon's
-   own environment when it starts."
+  "Whether the sub-agent tools have a model to call: a provider key, or a
+   local cchp answering at CCHP_URL (default http://localhost:8033). Judged
+   once, from the daemon's own environment, when it starts: MCP lists tools
+   per server, not per session."
   [env]
-  (boolean (some #(not-empty (get env %)) ["ANTHROPIC_API_KEY" "GEMINI_API_KEY" "OPENAI_API_KEY"])))
+  (boolean (or (some #(not-empty (get env %)) registry/provider-keys)
+               (cchp/healthy? (cchp/cchp-url env)))))
 
 (defn- sha256-hex [^String s]
   (let [d (.digest (MessageDigest/getInstance "SHA-256") (.getBytes s StandardCharsets/UTF_8))]
@@ -66,21 +70,24 @@
             ctx (cond-> {} dir (assoc "project-dir" dir) env (assoc "env" env))]
         (if (seq ctx) (McpTransportContext/create ctx) McpTransportContext/EMPTY)))))
 
-(defn- dispatcher [registry tool-name calls]
+(defn- dispatcher
+  "A tool-fn that runs `tool-name` for the calling project, under the calling
+   session's forwarded env (or `daemon-env` when the session sent none)."
+  [registry tool-name calls daemon-env]
   (fn [exchange args k]
     (let [ctx (.transportContext ^McpAsyncServerExchange exchange)
           dir (.get ctx "project-dir")
-          env (.get ctx "env")]
+          env (or (.get ctx "env") daemon-env)]
       (try
         (if-not dir
           (k ["Connect through /p/<absolute project dir>/mcp: this daemon serves many projects and the URL says which one."] true)
-          (let [entry (registry/get-or-create! registry dir)]
-            (when (zero? (mod (swap! calls inc) (:every eviction)))
-              (future (registry/evict-stale! registry eviction)))
-            (if (registry/tool-enabled? entry tool-name)
-              (binding [config/*session-env* env]
-                ((get (:tool-fns entry) tool-name) exchange args k))
-              (k [(str tool-name " is disabled by " dir "/.clojure-mcp/config.edn")] true))))
+          (binding [config/*session-env* env]
+            (let [entry (registry/get-or-create! registry dir)]
+              (when (zero? (mod (swap! calls inc) (:every eviction)))
+                (future (registry/evict-stale! registry eviction)))
+              (if (registry/tool-enabled? entry tool-name)
+                ((get (:tool-fns entry) tool-name) exchange args k)
+                (k [(str tool-name " is disabled by " dir "/.clojure-mcp/config.edn")] true)))))
         (catch Exception e
           (log/error e "Dispatch failed:" tool-name dir)
           (k [(str "Could not serve " tool-name " for " dir ": " (ex-message e))] true))))))
@@ -156,7 +163,7 @@
                                        (.capabilities (-> (McpSchema$ServerCapabilities/builder) (.tools true) (.build)))
                                        (.build))
         _ (doseq [t (tool-maps env)]
-            (core/add-tool mcp-server (assoc t :tool-fn (dispatcher reg (:name t) calls))))
+            (core/add-tool mcp-server (assoc t :tool-fn (dispatcher reg (:name t) calls env))))
         server (Server.)
         connector (doto (ServerConnector. server)
                     (.setHost "127.0.0.1")
