@@ -138,10 +138,10 @@ Commit this to a project's `.mcp.json`, pinning a commit `<sha>` of this reposit
 
 - The shim finds the project from its working directory: the nearest ancestor holding `.git`, `deps.edn`, `bb.edn` or `shadow-cljs.edn`. Each project gets its own config (`.clojure-mcp/config.edn`), nREPL connection and scratch pad, so an agent in one worktree never evaluates in another's REPL.
 - The shim answers the client's `initialize` at once and starts the daemon if none is running, so a cold start does not trip the client's connect timeout. Run the same command with `--warm` to start the daemon ahead of time.
-- Each session's environment is forwarded, so `bash` and API-key lookups see the caller's environment, not the environment of whichever shell started the daemon.
-- The sub-agent tools (`dispatch_agent`, `architect`, `code_critique`, `clojure_edit_agent`) are listed when an API key is set or a local [cchp](https://github.com/yqrashawn/claude-code-http-proxy) answers at `CCHP_URL` (default `http://localhost:8033`).
+- Each session's environment is forwarded, so `bash`, API-key lookups and `ENABLE_TOOLS`/`DISABLE_TOOLS` see the caller's environment, not the environment of whichever shell started the daemon.
+- The sub-agent tools (`dispatch_agent`, `architect`, `code_critique`, `clojure_edit_agent`) are listed when the daemon starts with an API key in its environment or a local [cchp](https://github.com/yqrashawn/claude-code-http-proxy) answering at `CCHP_URL` (default `http://localhost:8033`). The list is fixed then: a later session's own key is used for its calls, but does not add the tools.
 - The daemon listens on `127.0.0.1` only and requires a token that only the shim reads. Its state and `daemon.log` live in `~/.cache/clojure-mcp/daemons/<sha>/`. It exits after 8 hours without requests. A different `<sha>` gets its own daemon.
-- Projects share one tool list: a tool turned off in a project's config still appears, and calling it says it is disabled.
+- Projects share one tool list: a tool turned off in a project's config still appears, and calling it says it is disabled. Agents a project defines under `:agents`, and its `:tools-config` description overrides, do not appear in it.
 - For a local checkout of this repository, use `--local-root <checkout>` instead of `--sha`, with `{:local/root "<checkout>/shim"}` in `-Sdeps`.
 
 ### Older CLI profiles

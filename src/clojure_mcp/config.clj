@@ -465,7 +465,7 @@
   [var-name]
   (or (when *env-overrides*
         (get *env-overrides* var-name))
-      (System/getenv var-name)))
+      (caller-env var-name)))
 
 (defn- parse-tools-env-var
   "Parses a comma-separated string of tool names into a vector of keywords.

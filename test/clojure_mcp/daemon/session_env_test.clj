@@ -6,6 +6,7 @@
   (:require [clojure.test :refer [deftest is testing]]
             [clojure-mcp.agent.langchain :as chain]
             [clojure-mcp.config :as config]
+            [clojure-mcp.config.schema :as schema]
             [clojure-mcp.tools.bash.core :as bash]))
 
 (defn- run [cmd]
@@ -27,3 +28,20 @@
   (testing "a key only the daemon's env has does not count for a caller without it"
     (binding [config/*session-env* {}]
       (is (nil? (chain/agent-model))))))
+
+(deftest tool-filters-follow-the-caller
+  (testing "DISABLE_TOOLS / ENABLE_TOOLS in a session's env apply to that session only"
+    (binding [config/*session-env* {"DISABLE_TOOLS" "bash"}]
+      (is (false? (config/tool-id-enabled? {} :bash))))
+    (binding [config/*session-env* {"ENABLE_TOOLS" "glob_files"}]
+      (is (false? (config/tool-id-enabled? {} :bash)))
+      (is (true? (config/tool-id-enabled? {} :glob_files))))
+    (binding [config/*session-env* {}]
+      (is (true? (config/tool-id-enabled? {} :bash))))))
+
+(deftest env-refs-validate-against-the-caller
+  (testing "[:env VAR] in a config is checked against the caller's env, not the daemon's"
+    (binding [config/*session-env* {"ZZ_CALLER_ONLY" "k"}]
+      (is (nil? (schema/explain-config {:models {:openai/mine {:model-name "gpt-4o-mini" :api-key [:env "ZZ_CALLER_ONLY"]}}}))))
+    (binding [config/*session-env* {}]
+      (is (some? (schema/explain-config {:models {:openai/mine {:model-name "gpt-4o-mini" :api-key [:env "HOME"]}}}))))))
