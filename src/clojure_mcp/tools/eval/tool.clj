@@ -36,7 +36,9 @@ If the returned value is too long it will be truncated.
 
 IMPORTANT: When using `require` to reload namespaces ALWAYS use `:reload` to ensure you get the latest version of files.
 
-PORT PARAMETER: You can optionally specify a different nREPL port to evaluate on. This is useful when you have multiple nREPL servers running (e.g., a Clojure server and a ClojureScript server via shadow-cljs). The port will be lazily initialized on first use.
+PORT PARAMETER: when a project runs more than one nREPL (e.g. a Clojure JVM AND a shadow-cljs build on different ports), pass `port` to target a specific one. Without it the port comes from the project's `.nrepl-port`, which may be the wrong REPL or none. If no port resolves, the result lists the running nREPLs and how to start this project's REPL.
+
+CLOJURESCRIPT: a shadow-cljs nREPL is a Clojure REPL until upgraded. To evaluate in a build's live runtime (browser or Node), use the `cljs_eval` tool, which reads `.shadow-cljs/nrepl.port` and needs no nested REPL. `cljs_build_status` shows compile errors; `cljs_project_state` lists builds and runtimes.
 
 REPL helper functions are automatically loaded in the 'clj-mcp.repl-tools' namespace, providing convenient namespace and symbol exploration:
 

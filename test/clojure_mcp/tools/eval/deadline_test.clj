@@ -2,7 +2,7 @@
   "An nREPL that accepts a connection and never answers used to block the
    agent's tool call for hours (port init and session setup have no timeout
    of their own). The deadline turns that into an error the agent can act on."
-  (:require [clojure.string :as str]
+  (:require [clojure.string :as string]
             [clojure.test :refer [deftest is testing]]
             [clojure-mcp.config :as config]
             [clojure-mcp.nrepl :as nrepl]
@@ -12,7 +12,7 @@
   (:import (java.net ServerSocket)))
 
 (defn- err-text [result]
-  (str/join "\n" (map second (:outputs result))))
+  (string/join "\n" (map second (:outputs result))))
 
 (deftest deadline-passes-value-through
   (is (= {:ok 1} (deadline/call-with-deadline "clojure_eval" 1000 (fn [] {:ok 1})))))
@@ -23,8 +23,8 @@
         elapsed (- (System/currentTimeMillis) start)]
     (is (< elapsed 1000))
     (is (true? (:error result)))
-    (is (str/includes? (err-text result) "did not return within"))
-    (is (str/includes? (err-text result) "Do not retry against the same REPL"))))
+    (is (string/includes? (err-text result) "did not return within"))
+    (is (string/includes? (err-text result) "Do not retry against the same REPL"))))
 
 (deftest deadline-ms-adds-grace
   (is (= 60200 (deadline/deadline-ms 200 60000))))
@@ -43,7 +43,7 @@
         (let [{:keys [result error?] :as r} (deref p 3000 ::blocked)]
           (is (not= ::blocked r))
           (is (true? error?))
-          (is (str/includes? (str/join "\n" result) "did not return within")))
+          (is (string/includes? (string/join "\n" result) "did not return within")))
         (future-cancel accepted)))))
 
 (deftest deadline-custom-timeout-shape
@@ -53,4 +53,4 @@
                                               (fn [msg] {:outputs [msg] :error true}))]
       (is (true? (:error result)))
       (is (string? (first (:outputs result))))
-      (is (str/includes? (first (:outputs result)) "clojure_inspect_project did not return within")))))
+      (is (string/includes? (first (:outputs result)) "clojure_inspect_project did not return within")))))

@@ -3,7 +3,7 @@
    agent's next move is to start a REPL, not to guess a port. These assert the
    hints track what the project actually has on disk (or says in its config)
    rather than a hardcoded guess."
-  (:require [clojure.string :as str]
+  (:require [clojure.string :as string]
             [clojure.test :refer [deftest is testing]]
             [clojure-mcp.config :as config]
             [clojure-mcp.tools.eval.discovery :as discovery]
@@ -68,7 +68,7 @@
                             "bb.edn" "{:tasks {nrepl {:task (println 1)}}}"})
           result (discovery/start-repl-hints dir ["bb start:detach"])]
       (is (= ["bb start:detach" "bb nrepl"] result))
-      (is (not-any? #(str/includes? % "npx") result)))))
+      (is (not-any? #(string/includes? % "npx") result)))))
 
 (deftest no-nrepl-help-text
   (testing "the agent gets the running ports, the cross-worktree warning and how to start its REPL"
@@ -78,13 +78,13 @@
                     (fn [_] [{:host "localhost" :port 7777 :valid true :env-type :clj
                               :project-dir "/elsewhere/other-worktree" :matches-cwd false}])]
         (let [{:keys [outputs error]} (discovery/no-nrepl-help client dir)
-              text (str/join "\n" (map second outputs))]
+              text (string/join "\n" (map second outputs))]
           (is (true? error))
-          (is (str/includes? text "7777"))
-          (is (str/includes? text "user.dir"))
-          (is (str/includes? text "another worktree"))
-          (is (str/includes? text "bb start:detach"))
-          (is (not (str/includes? text "npx"))))))))
+          (is (string/includes? text "7777"))
+          (is (string/includes? text "user.dir"))
+          (is (string/includes? text "another worktree"))
+          (is (string/includes? text "bb start:detach"))
+          (is (not (string/includes? text "npx"))))))))
 
 (deftest eval-tool-without-port-returns-help
   (testing "clojure_eval with no port anywhere answers with the help, not a bare error"
@@ -96,4 +96,4 @@
         (tool-fn nil {"code" "1"} (fn [result error?] (deliver p {:result result :error? error?}))))
       (let [{:keys [result error?]} (deref p 5000 nil)]
         (is (true? error?))
-        (is (str/includes? (str/join "\n" result) "bb nrepl"))))))
+        (is (string/includes? (string/join "\n" result) "bb nrepl"))))))
