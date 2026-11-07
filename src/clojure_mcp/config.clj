@@ -455,9 +455,9 @@
     (System/getenv var-name)))
 
 (def ^:dynamic *agent-model-fallback*
-  "A no-arg fn giving the ChatModel for a sub-agent whose config names no model
-   when the caller's env has no provider key, or nil. Bound per call by the
-   daemon."
+  "A no-arg fn giving the ChatModel (or nil) for a sub-agent whose config
+   names no model when the caller's env has no provider key, or nil. Bound per
+   call by the daemon from its `:agent-model-fallback` hook."
   nil)
 
 (defn- get-env
