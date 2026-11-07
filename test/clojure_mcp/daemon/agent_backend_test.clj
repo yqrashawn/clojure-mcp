@@ -7,6 +7,7 @@
             [clojure.java.io :as io]
             [clojure.string :as string]
             [clojure.test :refer [deftest is testing]]
+            [clojure-mcp.agent.cchp-model :as cchp]
             [clojure-mcp.daemon.registry :as registry]
             [clojure-mcp.daemon.server :as server]
             [clojure-mcp.tools.agent-tool-builder.core :as agent-core])
@@ -74,7 +75,8 @@
     rpc))
 
 (defn- tool-names [env]
-  (let [d (server/start! {:version "v" :state-dir (temp-dir "state") :env env :idle-exit-ms 3600000})]
+  (let [d (server/start! {:version "v" :state-dir (temp-dir "state") :env env :idle-exit-ms 3600000
+                          :agent-model-fallback cchp/agent-model-fallback})]
     (try (set (map :name (get-in ((rpc-session d (temp-dir "p")) "tools/list" {}) [:result :tools])))
          (finally ((:stop! d))))))
 
@@ -97,7 +99,7 @@
           dir (temp-dir "p")
           client (:nrepl-client-atom (registry/get-or-create! (registry/new-registry) dir))
           agent-model (fn [env]
-                        (with-bindings (server/session-bindings env dir)
+                        (with-bindings (server/session-bindings env dir cchp/agent-model-fallback)
                           (:model (agent-core/get-or-create-agent client {:id :t :name "t" :system-message "s"}))))]
       (try
         (is (instance? AnthropicChatModel (agent-model {"ANTHROPIC_API_KEY" "x" "CCHP_URL" url})))
@@ -113,7 +115,8 @@
 (deftest keyless-session-gets-cchp-on-a-project-a-keyed-session-opened
   (let [{:keys [url seen stop]} (fake-cchp)
         dir (temp-dir "p")
-        d (server/start! {:version "v" :state-dir (temp-dir "state") :env {"CCHP_URL" url} :idle-exit-ms 3600000})]
+        d (server/start! {:version "v" :state-dir (temp-dir "state") :env {"CCHP_URL" url} :idle-exit-ms 3600000
+                          :agent-model-fallback cchp/agent-model-fallback})]
     (try
       ((rpc-session d dir {"ANTHROPIC_API_KEY" "x" "CCHP_URL" url}) "tools/call" {:name "glob_files" :arguments {:pattern "*"}})
       (let [{:keys [result]} ((rpc-session d dir {"CCHP_URL" url}) "tools/call" {:name "dispatch_agent" :arguments {:prompt "say hi"}})]
@@ -125,7 +128,8 @@
   (let [{:keys [url seen stop]} (fake-cchp)
         mine (fake-cchp)
         dir (temp-dir "p")
-        d (server/start! {:version "v" :state-dir (temp-dir "state") :env {"CCHP_URL" url} :idle-exit-ms 3600000})]
+        d (server/start! {:version "v" :state-dir (temp-dir "state") :env {"CCHP_URL" url} :idle-exit-ms 3600000
+                          :agent-model-fallback cchp/agent-model-fallback})]
     (io/make-parents (io/file dir ".clojure-mcp" "config.edn"))
     (spit (io/file dir ".clojure-mcp" "config.edn")
           (pr-str {:models {:openai/mine {:provider :openai :model-name "gpt-4o-mini" :api-key "k" :base-url (:url mine)}}
@@ -140,7 +144,8 @@
 (deftest dispatch-agent-reaches-cchp
   (let [{:keys [url seen stop]} (fake-cchp)
         dir (temp-dir "p")
-        d (server/start! {:version "v" :state-dir (temp-dir "state") :env {"CCHP_URL" url} :idle-exit-ms 3600000})]
+        d (server/start! {:version "v" :state-dir (temp-dir "state") :env {"CCHP_URL" url} :idle-exit-ms 3600000
+                          :agent-model-fallback cchp/agent-model-fallback})]
     (try
       (let [{:keys [result]} ((rpc-session d dir) "tools/call" {:name "dispatch_agent" :arguments {:prompt "say hi"}})
             completion (some #(when (= "/v1/chat/completions" (:path %)) (json/read-str (:body %))) @seen)]

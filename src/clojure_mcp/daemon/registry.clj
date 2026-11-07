@@ -1,10 +1,8 @@
 (ns clojure-mcp.daemon.registry
   "Per-project state for the daemon: one nrepl-client-atom, config and tool
    set per canonical project dir. Entries are built lazily on a project's
-   first call and rebuilt when its REPL restarts (its .nrepl-port changes).
-   Ported from cchp's per-cwd registry."
+   first call and rebuilt when its REPL restarts (its .nrepl-port changes)."
   (:require [clojure.java.io :as io]
-            [clojure-mcp.agent.cchp-model :as cchp]
             [clojure-mcp.config :as config]
             [clojure-mcp.config.schema :as schema]
             [clojure-mcp.core :as core]
@@ -22,16 +20,6 @@
 (def provider-keys
   "Environment variables that give the sub-agent tools a model of their own."
   ["ANTHROPIC_API_KEY" "GEMINI_API_KEY" "OPENAI_API_KEY"])
-
-(defn cchp-agent-model
-  "A model that runs sub-agents through the local cchp in `dir`, if it answers.
-   Only reached for a sub-agent whose config names no model and a session
-   whose `env` has no provider key: cchp is the fallback, never a replacement
-   for a choice someone made."
-  [env dir]
-  (let [base (cchp/cchp-url env)]
-    (when (cchp/healthy? base)
-      (cchp/create-chat-model {:base-url base :workspace-root dir}))))
 
 (defn- build-entry [dir port]
   ;; The entry is shared by every session, so [:env] refs are not checked

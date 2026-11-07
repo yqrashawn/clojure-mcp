@@ -10,8 +10,11 @@
 (defn start
   "Runs the daemon until it has been idle for `idle-exit-ms` (default 8 h),
    then exits the JVM. `version` names the state dir: the shim passes the
-   pinned fork sha, so projects pinning different shas never share a daemon."
-  [{:keys [version state-root idle-exit-ms env]}]
+   pinned sha, so projects pinning different shas never share a daemon.
+   `agent-model-fallback`, optional, is a qualified symbol naming the hook
+   described in `clojure-mcp.daemon.server/start!`; it defaults to the local
+   cchp (`clojure-mcp.agent.cchp-model/agent-model-fallback`)."
+  [{:keys [version state-root idle-exit-ms env agent-model-fallback]}]
   (assert (some? version) ":version is required")
   (let [version (str version)
         dir (state/state-dir (or state-root (state/default-root)) version)]
@@ -25,7 +28,8 @@
     (let [{:keys [stopped]} (server/start! {:version version
                                             :state-dir dir
                                             :env (or env (into {} (System/getenv)))
-                                            :idle-exit-ms (or idle-exit-ms 28800000)})]
+                                            :idle-exit-ms (or idle-exit-ms 28800000)
+                                            :agent-model-fallback @(requiring-resolve (or agent-model-fallback 'clojure-mcp.agent.cchp-model/agent-model-fallback))})]
       @stopped
       (shutdown-agents)
       (System/exit 0))))

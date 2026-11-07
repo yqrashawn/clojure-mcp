@@ -10,7 +10,6 @@
   (:require [clojure.data.json :as json]
             [clojure.java.io :as io]
             [clojure.string :as string]
-            [clojure-mcp.agent.cchp-model :as cchp]
             [clojure-mcp.config :as config]
             [clojure-mcp.config.schema :as schema]
             [clojure-mcp.core :as core]
@@ -41,13 +40,13 @@
 (def ^:private eviction {:ttl-ms 1800000 :max-entries 50 :every 100})
 
 (defn agent-backend-available?
-  "Whether the sub-agent tools have a model to call: a provider key, or a
-   local cchp answering at CCHP_URL (default http://localhost:8033). Judged
-   once, from the daemon's own environment, when it starts: MCP lists tools
-   per server, not per session."
-  [env]
+  "Whether the sub-agent tools have a model to call: a provider key, or an
+   `agent-model-fallback` that offers a model for `env` (see `start!`).
+   Judged once, from the daemon's own environment, when it starts: MCP lists
+   tools per server, not per session."
+  [env agent-model-fallback]
   (boolean (or (some #(not-empty (get env %)) registry/provider-keys)
-               (cchp/healthy? (cchp/cchp-url env)))))
+               (some-> agent-model-fallback (apply [env])))))
 
 (defn- sha256-hex [^String s]
   (let [d (.digest (MessageDigest/getInstance "SHA-256") (.getBytes s StandardCharsets/UTF_8))]
@@ -73,15 +72,17 @@
 
 (defn session-bindings
   "The bindings a tool call for `dir` runs under, for a session whose env is
-   `env`."
-  [env dir]
-  {#'config/*session-env* env
-   #'config/*agent-model-fallback* #(registry/cchp-agent-model env dir)})
+   `env`. `agent-model-fallback` is the daemon's hook (see `start!`), or nil."
+  [env dir agent-model-fallback]
+  (cond-> {#'config/*session-env* env}
+    agent-model-fallback
+    (assoc #'config/*agent-model-fallback*
+           #(some-> (agent-model-fallback env) (apply [dir])))))
 
 (defn- dispatcher
   "A tool-fn that runs `tool-name` for the calling project, under the calling
    session's forwarded env (or `daemon-env` when the session sent none)."
-  [registry tool-name calls daemon-env]
+  [registry tool-name calls daemon-env agent-model-fallback]
   (fn [exchange args k]
     (let [ctx (.transportContext ^McpAsyncServerExchange exchange)
           dir (.get ctx "project-dir")
@@ -89,7 +90,7 @@
       (try
         (if-not dir
           (k ["Connect through /p/<absolute project dir>/mcp: this daemon serves many projects and the URL says which one."] true)
-          (with-bindings (session-bindings env dir)
+          (with-bindings (session-bindings env dir agent-model-fallback)
             (let [entry (registry/get-or-create! registry dir)]
               (when (zero? (mod (swap! calls inc) (:every eviction)))
                 (future (registry/evict-stale! registry eviction)))
@@ -103,14 +104,14 @@
 
 (defn- tool-maps
   "Tool metadata, built once from a throwaway project dir."
-  [env]
+  [env agent-model-fallback]
   (let [dir (.toFile (Files/createTempDirectory "clojure-mcp-daemon" (make-array FileAttribute 0)))]
     (try
       ;; like registry entries: [:env] refs are a session's business, not the
       ;; starting shell's
       (cond->> (tools/build-all-tools (atom (binding [schema/*validate-env-vars* false]
                                               (core/create-and-start-nrepl-connection {:project-dir (str dir)}))))
-        (not (agent-backend-available? env)) (remove #(agent-tool-names (:name %))))
+        (not (agent-backend-available? env agent-model-fallback)) (remove #(agent-tool-names (:name %))))
       (finally (.delete dir)))))
 
 (defn- security-filter [token port last-activity]
@@ -157,8 +158,13 @@
 (defn start!
   "Starts the daemon's HTTP server and writes its state files into
    `state-dir`. Returns {:port :token :stop! :stopped}; `stopped` is a promise
-   delivered once the server is down (idle exit or stop!)."
-  [{:keys [version state-dir env idle-exit-ms]}]
+   delivered once the server is down (idle exit or stop!).
+
+   `agent-model-fallback`, optional, gives the sub-agent tools a model when
+   neither the agent's config nor the caller's provider keys do: a fn of a
+   session's env that returns nil when it has no model for that env, else a
+   fn of the project dir that returns a langchain4j ChatModel."
+  [{:keys [version state-dir env idle-exit-ms agent-model-fallback]}]
   (state/ensure-dir! state-dir)
   (let [lock (or (state/lock! state-dir)
                  (throw (ex-info (str "Another clojure-mcp daemon " version " is already running from " state-dir)
@@ -177,8 +183,8 @@
                                        (.serverInfo "clojure-mcp" version)
                                        (.capabilities (-> (McpSchema$ServerCapabilities/builder) (.tools true) (.build)))
                                        (.build))
-        _ (doseq [t (tool-maps env)]
-            (core/add-tool mcp-server (assoc t :tool-fn (dispatcher reg (:name t) calls env))))
+        _ (doseq [t (tool-maps env agent-model-fallback)]
+            (core/add-tool mcp-server (assoc t :tool-fn (dispatcher reg (:name t) calls env agent-model-fallback))))
         server (Server.)
         connector (doto (ServerConnector. server)
                     (.setHost "127.0.0.1")

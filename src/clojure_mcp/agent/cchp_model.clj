@@ -81,3 +81,14 @@
               (.aiMessage (AiMessage/from (str text)))
               (.finishReason FinishReason/STOP)
               (.build)))))))
+
+(defn agent-model-fallback
+  "The daemon's :agent-model-fallback hook: when the cchp at CCHP_URL in `env`
+   answers, a fn of a project dir giving a model that runs sub-agents through
+   that cchp in the dir. Only reached for a sub-agent whose config names no
+   model and a session whose env has no provider key: cchp is the fallback,
+   never a replacement for a choice someone made."
+  [env]
+  (let [base (cchp-url env)]
+    (when (healthy? base)
+      (fn [dir] (create-chat-model {:base-url base :workspace-root dir})))))
