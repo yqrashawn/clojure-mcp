@@ -7,14 +7,34 @@
             [clojure-mcp.daemon.state :as state]
             [clojure-mcp.logging :as logging]))
 
+(def default-agent-model-fallback
+  "The hook a daemon gets when its start options name none: sub-agents run
+   through the local cchp."
+  'clojure-mcp.agent.cchp-model/agent-model-fallback)
+
+(defn resolve-agent-model-fallback
+  "The fn a qualified symbol names, nil for nil. Throws, naming the symbol,
+   when it does not resolve to a fn: a bad symbol must stop the daemon with a
+   message in daemon.log, not fail later or turn the fallback silently off."
+  [sym]
+  (when sym
+    (let [v (try (requiring-resolve sym)
+                 (catch Exception e
+                   (throw (ex-info (str ":agent-model-fallback " sym " could not be loaded: " (ex-message e))
+                                   {:symbol sym} e))))]
+      (cond
+        (nil? v) (throw (ex-info (str ":agent-model-fallback " sym " does not name a var") {:symbol sym}))
+        (fn? @v) @v
+        :else (throw (ex-info (str ":agent-model-fallback " sym " is not a fn") {:symbol sym}))))))
+
 (defn start
   "Runs the daemon until it has been idle for `idle-exit-ms` (default 8 h),
    then exits the JVM. `version` names the state dir: the shim passes the
    pinned sha, so projects pinning different shas never share a daemon.
-   `agent-model-fallback`, optional, is a qualified symbol naming the hook
-   described in `clojure-mcp.daemon.server/start!`; it defaults to the local
-   cchp (`clojure-mcp.agent.cchp-model/agent-model-fallback`)."
-  [{:keys [version state-root idle-exit-ms env agent-model-fallback]}]
+   `agent-model-fallback` is a qualified symbol naming the hook described in
+   `clojure-mcp.daemon.server/start!`. Left out, it is the local cchp
+   (`default-agent-model-fallback`); an explicit nil turns the fallback off."
+  [{:keys [version state-root idle-exit-ms env] :as opts}]
   (assert (some? version) ":version is required")
   (let [version (str version)
         dir (state/state-dir (or state-root (state/default-root)) version)]
@@ -29,7 +49,8 @@
                                             :state-dir dir
                                             :env (or env (into {} (System/getenv)))
                                             :idle-exit-ms (or idle-exit-ms 28800000)
-                                            :agent-model-fallback @(requiring-resolve (or agent-model-fallback 'clojure-mcp.agent.cchp-model/agent-model-fallback))})]
+                                            :agent-model-fallback (resolve-agent-model-fallback
+                                                                   (get opts :agent-model-fallback default-agent-model-fallback))})]
       @stopped
       (shutdown-agents)
       (System/exit 0))))
