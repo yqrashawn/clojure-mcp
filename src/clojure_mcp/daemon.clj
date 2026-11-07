@@ -14,17 +14,18 @@
 
 (defn resolve-agent-model-fallback
   "The fn a qualified symbol names, nil for nil. Throws, naming the symbol,
-   when it does not resolve: a bad symbol must stop the daemon with a message
-   in daemon.log, not an NPE."
+   when it does not resolve to a fn: a bad symbol must stop the daemon with a
+   message in daemon.log, not fail later or turn the fallback silently off."
   [sym]
   (when sym
     (let [v (try (requiring-resolve sym)
                  (catch Exception e
                    (throw (ex-info (str ":agent-model-fallback " sym " could not be loaded: " (ex-message e))
                                    {:symbol sym} e))))]
-      (if v
-        @v
-        (throw (ex-info (str ":agent-model-fallback " sym " does not name a var") {:symbol sym}))))))
+      (cond
+        (nil? v) (throw (ex-info (str ":agent-model-fallback " sym " does not name a var") {:symbol sym}))
+        (fn? @v) @v
+        :else (throw (ex-info (str ":agent-model-fallback " sym " is not a fn") {:symbol sym}))))))
 
 (defn start
   "Runs the daemon until it has been idle for `idle-exit-ms` (default 8 h),

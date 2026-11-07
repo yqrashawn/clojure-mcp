@@ -8,14 +8,17 @@
             [clojure-mcp.daemon :as daemon]))
 
 (defn hook [_env] nil)
+(def not-a-fn {:a 1})
+(def a-string "x")
 
 (deftest resolve-agent-model-fallback-test
   (testing "nil means no hook"
     (is (nil? (daemon/resolve-agent-model-fallback nil))))
   (testing "a qualified symbol resolves to the fn it names"
     (is (identical? hook (daemon/resolve-agent-model-fallback `hook))))
-  (testing "an unresolvable symbol throws, naming it"
-    (doseq [sym ['clojure-mcp.daemon-test/no-such-hook 'no.such.ns/hook]]
+  (testing "a symbol that does not resolve to a fn throws, naming it"
+    (doseq [sym ['clojure-mcp.daemon-test/no-such-hook 'no.such.ns/hook
+                 `not-a-fn `a-string]]
       (let [e (try (daemon/resolve-agent-model-fallback sym) nil
                    (catch clojure.lang.ExceptionInfo e e))]
         (is (some? e) (str sym))
