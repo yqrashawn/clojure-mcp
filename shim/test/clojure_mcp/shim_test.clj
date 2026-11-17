@@ -127,8 +127,11 @@
       (write-config! proj "{:mcp-instructions \"  \"}")
       (is (nil? (shim/mcp-instructions home proj))))
     (testing "a project config without the key keeps home's"
-      (write-config! proj "{:cljfmt true :x #env FOO}")
-      (is (= "H" (shim/mcp-instructions home proj)) "unknown tags don't void the file"))
+      (write-config! proj "{:cljfmt true}")
+      (is (= "H" (shim/mcp-instructions home proj))))
+    (testing "a tagged literal voids the file, as the JVM's edn read does"
+      (write-config! proj "{:mcp-instructions false :x #env FOO}")
+      (is (= "H" (shim/mcp-instructions home proj))))
     (testing "an unreadable project config counts as {}"
       (write-config! proj "{:mcp-instructions false")
       (is (= "H" (shim/mcp-instructions home proj))))

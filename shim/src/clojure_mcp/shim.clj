@@ -67,12 +67,13 @@
 
 (defn- read-config
   "The map in `<dir>/.clojure-mcp/config.edn`, or {} when it is absent,
-   unreadable or not a map. Unknown reader tags read as their value."
+   unreadable or not a map. A tagged literal makes it unreadable, as in the
+   JVM's load-config-file, so the shim never applies a file the daemon drops."
   [dir]
   (let [f (io/file dir ".clojure-mcp" "config.edn")]
     (or (try
           (when (.isFile f)
-            (let [m (edn/read-string {:default (fn [_tag v] v)} (slurp f))]
+            (let [m (edn/read-string (slurp f))]
               (when (map? m) m)))
           (catch Exception _ nil))
         {})))
