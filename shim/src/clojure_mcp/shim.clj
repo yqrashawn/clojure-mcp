@@ -9,12 +9,18 @@
    connect timeout; later requests wait for the daemon. If the daemon goes
    away mid-session it is restarted and the session replayed.
 
+   That reply carries the project's MCP instructions, resolved here from
+   ~/.clojure-mcp/config.edn and <project>/.clojure-mcp/config.edn
+   (`:mcp-instructions`), since the shared daemon serves every project and
+   advertises none.
+
    Usage:
      bb -Sdeps '{:deps {io.github.yqrashawn/clojure-mcp {:git/url \"https://github.com/yqrashawn/clojure-mcp\" :git/sha \"<sha>\" :deps/root \"shim\"}}}' \\
         -m clojure-mcp.shim --sha <sha> [--local-root <dir>] [--warm] [--start-timeout-ms 180000]"
   (:require [babashka.http-client :as http]
             [babashka.process :as p]
             [cheshire.core :as json]
+            [clojure.edn :as edn]
             [clojure.java.io :as io]
             [clojure.string :as string])
   (:import (java.io BufferedReader File InputStream)
@@ -48,6 +54,41 @@
        (string/join (map #(str "/" (string/replace (URLEncoder/encode ^String % "UTF-8") "+" "%20"))
                       (remove string/blank? (string/split dir #"/"))))
        "/mcp"))
+
+(def default-mcp-instructions
+  "A copy of clojure-mcp.config/default-mcp-instructions: the shim can't load
+   the fork's src/. A shim test fails when the two differ."
+  (str "Clojure tooling is available for this project.\n\n"
+       "- A persistent nREPL connection tool is available for evaluating and "
+       "testing Clojure and ClojureScript code.\n"
+       "- Parenthesis-safe, structure-aware tools are available for editing "
+       "Clojure source files.\n"
+       "- A tool is available for repairing unbalanced parentheses."))
+
+(defn- read-config
+  "The map in `<dir>/.clojure-mcp/config.edn`, or {} when it is absent,
+   unreadable or not a map. A tagged literal makes it unreadable, as in the
+   JVM's load-config-file, so the shim never applies a file the daemon drops."
+  [dir]
+  (let [f (io/file dir ".clojure-mcp" "config.edn")]
+    (or (try
+          (when (.isFile f)
+            (let [m (edn/read-string (slurp f))]
+              (when (map? m) m)))
+          (catch Exception _ nil))
+        {})))
+
+(defn mcp-instructions
+  "The instructions to advertise for `project-dir`, as clojure-mcp.config/
+   get-mcp-instructions resolves them over the home config merged with the
+   project's: nil when :mcp-instructions is false or a blank string, a
+   non-blank string as is, else the default."
+  [home-dir project-dir]
+  (let [v (:mcp-instructions (merge (read-config home-dir) (read-config project-dir)))]
+    (cond
+      (false? v) nil
+      (string? v) (when-not (string/blank? v) v)
+      :else default-mcp-instructions)))
 
 (defn- sha256-hex [^String s]
   (let [d (.digest (MessageDigest/getInstance "SHA-256") (.getBytes s "UTF-8"))]
@@ -264,13 +305,14 @@
 
 (defn context
   "The shim's state for one stdio session. `opts` needs :project-dir
-   :version :state-dir :spawn! :start-timeout-ms :read-line :emit :exit!."
+   :version :state-dir :spawn! :start-timeout-ms :read-line :emit :exit!,
+   and optionally :instructions for the initialize reply."
   [opts]
   (assoc opts :conn (atom nil) :init (atom nil) :lock (Object.) :running (atom true)))
 
 (defn relay!
   "Relays until stdin ends, then closes the daemon session and exits 0."
-  [{:keys [read-line emit exit! conn init running version] :as ctx}]
+  [{:keys [read-line emit exit! conn init running version instructions] :as ctx}]
   (loop []
     (if-let [line (read-line)]
       (do
@@ -281,9 +323,10 @@
               (do (reset! init msg)
                   (emit (json/generate-string
                          {:jsonrpc "2.0" :id (:id msg)
-                          :result {:protocolVersion (get-in msg [:params :protocolVersion])
-                                   :capabilities {:tools {:listChanged true}}
-                                   :serverInfo {:name "clojure-mcp" :version version}}}))
+                          :result (cond-> {:protocolVersion (get-in msg [:params :protocolVersion])
+                                           :capabilities {:tools {:listChanged true}}
+                                           :serverInfo {:name "clojure-mcp" :version version}}
+                                    instructions (assoc :instructions instructions))}))
                   (start-connect! ctx)
                   (listen! ctx))
               ;; sent for the client by open-session!, once the daemon is up
@@ -320,8 +363,10 @@
       (System/exit 2))
     (let [v (version opts)
           stdin (io/reader System/in)
+          project-dir (project-root (System/getProperty "user.dir"))
           ctx (context (merge opts
-                              {:project-dir (project-root (System/getProperty "user.dir"))
+                              {:project-dir project-dir
+                               :instructions (mcp-instructions (System/getProperty "user.home") project-dir)
                                :version v
                                :state-dir (state-dir v)
                                :spawn! spawn-daemon!

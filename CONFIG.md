@@ -148,6 +148,9 @@ The server-level instructions advertised to the MCP client during initialization
 **Per-profile override:**
 Config profiles are merged last, so a profile can set its own `:mcp-instructions` to tailor the message for that mode (or `false` to disable it). The shipped profiles do this: `repl` tells the agent to use its own tools for reading and editing, and `cli-assist` and `cli-assist-agent` describe the editing tools as fallbacks. Precedence (highest to lowest): profile → project config → user-home config → built-in default.
 
+**Through the shared daemon's shim:**
+The shim answers `initialize` itself, so it advertises the instructions: it resolves `:mcp-instructions` from `~/.clojure-mcp/config.edn` merged with the project's `.clojure-mcp/config.edn` (project wins), with the same values as above. Config profiles do not apply there.
+
 **When to use each setting:**
 - Default - Fine for most setups; announces the available Clojure tooling without naming specific tools.
 - Custom string - When you want to describe a specialized toolset or workflow to the model.
