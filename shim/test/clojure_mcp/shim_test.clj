@@ -56,11 +56,12 @@
 
 (defn- harness
   "Runs the shim in-process with a queue for stdin and one for stdout."
-  [{:keys [state-dir spawn! start-timeout-ms] :or {start-timeout-ms 5000}}]
+  [{:keys [state-dir spawn! start-timeout-ms instructions] :or {start-timeout-ms 5000}}]
   (let [in (LinkedBlockingQueue.)
         out (LinkedBlockingQueue.)
         exits (promise)
         ctx (shim/context {:project-dir "/w/my proj" :version "tv" :state-dir state-dir
+                           :instructions instructions
                            :spawn! spawn! :start-timeout-ms start-timeout-ms
                            :read-line #(let [l (.take in)] (when-not (= ::eof l) l))
                            :emit #(.put out %)
@@ -102,6 +103,62 @@
   (let [v (shim/version {:local-root "/tmp"})]
     (is (re-matches #"local-[0-9a-f]{12}" v))
     (is (= v (shim/version {:local-root "/tmp/"})) "same dir, same daemon")))
+
+(defn- write-config! [dir form]
+  (.mkdirs (io/file dir ".clojure-mcp"))
+  (spit (io/file dir ".clojure-mcp" "config.edn") form))
+
+(deftest mcp-instructions-resolve-like-the-jvm
+  ;; The daemon advertises no instructions, so through the shim this is the
+  ;; only place a client learns what clojure-mcp offers.
+  (let [home (temp-dir "home") proj (temp-dir "proj")]
+    (testing "no config anywhere: the default text"
+      (is (= shim/default-mcp-instructions (shim/mcp-instructions home proj))))
+    (testing "home string alone"
+      (write-config! home "{:mcp-instructions \"H\"}")
+      (is (= "H" (shim/mcp-instructions home proj))))
+    (testing "the project's string beats home's"
+      (write-config! proj "{:mcp-instructions \"P\"}")
+      (is (= "P" (shim/mcp-instructions home proj))))
+    (testing "false in the project disables them over home's string"
+      (write-config! proj "{:mcp-instructions false}")
+      (is (nil? (shim/mcp-instructions home proj))))
+    (testing "a blank string disables them"
+      (write-config! proj "{:mcp-instructions \"  \"}")
+      (is (nil? (shim/mcp-instructions home proj))))
+    (testing "a project config without the key keeps home's"
+      (write-config! proj "{:cljfmt true :x #env FOO}")
+      (is (= "H" (shim/mcp-instructions home proj)) "unknown tags don't void the file"))
+    (testing "an unreadable project config counts as {}"
+      (write-config! proj "{:mcp-instructions false")
+      (is (= "H" (shim/mcp-instructions home proj))))
+    (testing "a non-string value: the default"
+      (write-config! home "{:mcp-instructions 42}")
+      (write-config! proj "{}")
+      (is (= shim/default-mcp-instructions (shim/mcp-instructions home proj))))))
+
+(deftest default-instructions-match-the-jvm
+  ;; The shim keeps a copy because it can't load src/; a stale copy would
+  ;; tell shim clients something the JVM no longer says.
+  (let [src (slurp (io/file ".." "src" "clojure_mcp" "config.clj"))
+        start (string/index-of src "(def default-mcp-instructions")
+        form (read (java.io.PushbackReader. (java.io.StringReader. (subs src start))))]
+    (is (some? start))
+    (is (= 'str (first (last form))) "the def's value is still a (str ...) of literals")
+    (is (= (eval (last form)) shim/default-mcp-instructions))))
+
+(deftest initialize-reply-carries-instructions
+  (let [dir (temp-dir "state") fakes (atom [])
+        [_ spawn!] (spawner dir fakes)]
+    (testing "present when resolved"
+      (let [{:keys [send! recv!]} (harness {:state-dir dir :spawn! spawn! :instructions "X"})]
+        (send! init-msg)
+        (is (= "X" (get-in (recv! 1000) [:result :instructions])))))
+    (testing "absent, not null, when disabled"
+      (let [{:keys [send! recv!]} (harness {:state-dir dir :spawn! spawn!})]
+        (send! init-msg)
+        (is (not (contains? (:result (recv! 1000)) :instructions)))))
+    (doseq [f @fakes] ((:stop! f)))))
 
 (deftest initialize-answered-before-daemon
   (let [dir (temp-dir "state") fakes (atom [])
