@@ -150,3 +150,62 @@
       (is (str/includes? (first (:result result)) "=> 3"))
       (is (str/includes? (first (:result result)) "*======== user | clj ========*"))
       (is (false? (:error result))))))
+
+;; An nREPL on a Unix domain socket (zgh serve --nrepl-socket) has no port:
+;; `socket` must reach it, and its state must not mix with the port's.
+(defn- run-tool [inputs]
+  (let [tool-fn (:tool-fn (tool-system/registration-map (eval-tool/create-eval-tool *nrepl-client-atom*)))
+        p (promise)]
+    (tool-fn nil inputs (fn [result error?] (deliver p {:result result :error? error?})))
+    (deref p 30000 :timeout)))
+
+(deftest socket-evaluates-on-a-unix-socket-nrepl
+  (let [dir (.toFile (java.nio.file.Files/createTempDirectory "cmcp-sock" (make-array java.nio.file.attribute.FileAttribute 0)))
+        path (str dir "/nrepl.sock")
+        seen (atom [])
+        handler (let [h (nrepl.server/default-handler)]
+                  (fn [msg] (when (= "eval" (:op msg)) (swap! seen conj (:code msg))) (h msg)))
+        server (nrepl.server/start-server :socket path :handler handler)]
+    (try
+      (let [on-socket (run-tool {"code" "(+ 40 2)" "socket" path})]
+        (is (false? (:error? on-socket)) (pr-str on-socket))
+        (is (str/includes? (str/join (:result on-socket)) "42"))
+        (is (some #{"(+ 40 2)"} @seen) "the socket's server got the code, not the port's"))
+      (testing "a socket nothing listens on is an error naming it, not a port"
+        (let [gone (str dir "/gone.sock")
+              r (run-tool {"code" "1" "socket" gone})]
+          (is (true? (:error? r)))
+          (is (str/includes? (str/join (:result r)) gone))
+          (is (str/includes? (str/join (:result r)) "no such socket file")
+              "it never reached a server, so it does not say one disconnected")))
+      (finally
+        (nrepl.server/stop-server server)
+        (doseq [f (reverse (file-seq dir))] (.delete ^java.io.File f))))))
+
+(deftest a-socket-keeps-its-own-state-apart-from-the-port
+  ;; the socket service is built from the base client, which keeps its
+  ;; :port: were the state keyed by port, the socket would reuse the port's
+  ;; sessions and :initialized?, and its REPL would never get the helpers
+  (let [base (nrepl/create {:port 7888})
+        _ (nrepl/set-port-initialized! base)
+        on-socket (nrepl/with-socket base "/tmp/x.sock")]
+    (is (true? (nrepl/port-initialized? base)))
+    (is (= 7888 (:port on-socket)) "the base port is still in the map")
+    (is (false? (nrepl/port-initialized? on-socket)) "the socket's REPL is initialized on its own")
+    (is (= "unix:/tmp/x.sock" (nrepl/endpoint on-socket)))
+    (let [back (nrepl/with-port on-socket 7888)]
+      (is (nil? (:socket back)) "with-port connects by port again")
+      (is (= 7888 (nrepl/endpoint back)))
+      (is (true? (nrepl/port-initialized? back)) "and finds the port's own state"))))
+
+(deftest socket-and-port-are-exclusive-and-socket-must-be-a-path
+  (let [tool (eval-tool/create-eval-tool *nrepl-client-atom*)]
+    (is (thrown? clojure.lang.ExceptionInfo
+                 (tool-system/validate-inputs tool {:code "1" :socket "/tmp/x.sock" :port 7888})))
+    (is (thrown? clojure.lang.ExceptionInfo
+                 (tool-system/validate-inputs tool {:code "1" :socket "  "})))
+    (is (thrown? clojure.lang.ExceptionInfo
+                 (tool-system/validate-inputs tool {:code "1" :socket 7888})))
+    (is (= {:code "1" :socket "/tmp/x.sock"}
+           (tool-system/validate-inputs tool {:code "1" :socket "/tmp/x.sock"}))
+        "a socket resolves no port")))
