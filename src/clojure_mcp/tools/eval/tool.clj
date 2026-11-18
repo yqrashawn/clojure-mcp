@@ -6,7 +6,8 @@
    [clojure-mcp.config :as config]
    [clojure-mcp.nrepl :as nrepl]
    [clojure-mcp.tools.eval.deadline :as deadline]
-   [clojure-mcp.tools.eval.discovery :as discovery]))
+   [clojure-mcp.tools.eval.discovery :as discovery]
+   [clojure.string :as str]))
 
 ;; Factory function to create the tool configuration
 (defn create-eval-tool
@@ -38,6 +39,8 @@ IMPORTANT: When using `require` to reload namespaces ALWAYS use `:reload` to ens
 
 PORT PARAMETER: when a project runs more than one nREPL (e.g. a Clojure JVM AND a shadow-cljs build on different ports), pass `port` to target a specific one. Without it the port comes from the project's `.nrepl-port`, which may be the wrong REPL or none. If no port resolves, the result lists the running nREPLs and how to start this project's REPL.
 
+SOCKET PARAMETER: an nREPL listening on a Unix domain socket (e.g. `zgh serve --nrepl-socket <path>`) has no port: pass its path as `socket` instead of `port`.
+
 CLOJURESCRIPT: a shadow-cljs nREPL is a Clojure REPL until upgraded. To evaluate in a build's live runtime (browser or Node), use the `cljs_eval` tool, which reads `.shadow-cljs/nrepl.port` and needs no nested REPL. `cljs_build_status` shows compile errors; `cljs_project_state` lists builds and runtimes.
 
 REPL helper functions are automatically loaded in the 'clj-mcp.repl-tools' namespace, providing convenient namespace and symbol exploration:
@@ -66,11 +69,13 @@ Examples:
                 :timeout_ms {:type :integer
                              :description "Optional timeout in milliseconds for evaluation."}
                 :port {:type :integer
-                       :description "Optional nREPL port to evaluate on. If not specified, uses the default port. Useful for evaluating on different nREPL servers (e.g., ClojureScript via shadow-cljs)."}}
+                       :description "Optional nREPL port to evaluate on. If not specified, uses the default port. Useful for evaluating on different nREPL servers (e.g., ClojureScript via shadow-cljs)."}
+                :socket {:type :string
+                         :description "Optional path of an nREPL's Unix domain socket to evaluate on (an nREPL started with :socket, e.g. `zgh serve --nrepl-socket`), instead of a port. Not with `port`."}}
    :required [:code]})
 
 (defmethod tool-system/validate-inputs ::clojure-eval [{:keys [nrepl-client-atom]} inputs]
-  (let [{:keys [code timeout_ms port]} inputs]
+  (let [{:keys [code timeout_ms port socket]} inputs]
     (when-not code
       (throw (ex-info (str "Missing required parameter: code " (pr-str inputs))
                       {:inputs inputs})))
@@ -80,21 +85,30 @@ Examples:
     (when (and port (not (pos-int? port)))
       (throw (ex-info (str "Error parameter must be positive integer: port " (pr-str inputs))
                       {:inputs inputs})))
+    (when (and socket (not (and (string? socket) (not (str/blank? socket)))))
+      (throw (ex-info (str "Error parameter must be a socket path: socket " (pr-str inputs))
+                      {:inputs inputs})))
+    (when (and socket port)
+      (throw (ex-info (str "Pass port or socket, not both " (pr-str inputs))
+                      {:inputs inputs})))
     ;; Resolve effective port: provided, configured, or from .nrepl-port file.
     ;; nil makes execute-tool answer with discovery help instead of evaluating.
-    (let [service @nrepl-client-atom
-          project-dir (config/get-nrepl-user-dir service)
-          effective-port (or port
-                             (:port service)
-                             (nrepl/read-nrepl-port-file project-dir))]
-      (assoc inputs :port effective-port))))
+    (if socket
+      inputs
+      (let [service @nrepl-client-atom
+            project-dir (config/get-nrepl-user-dir service)
+            effective-port (or port
+                               (:port service)
+                               (nrepl/read-nrepl-port-file project-dir))]
+        (assoc inputs :port effective-port)))))
 
 (defmethod tool-system/execute-tool ::clojure-eval [{:keys [nrepl-client-atom timeout session-type deadline-grace-ms]}
-                                                    {:keys [timeout_ms port] :as inputs}]
-  ;; port is already resolved by validate-inputs
+                                                    {:keys [timeout_ms port socket] :as inputs}]
+  ;; port is already resolved by validate-inputs; a socket needs none
   (let [base-client @nrepl-client-atom
-        session-type (or session-type :default)]
-    (if (and (nil? port) (nil? (:port base-client)))
+        session-type (or session-type :default)
+        where (if socket (str "socket " socket) (str "port " port))]
+    (if (and (nil? socket) (nil? port) (nil? (:port base-client)))
       (discovery/no-nrepl-help base-client (config/get-nrepl-user-dir base-client))
       (deadline/call-with-deadline
        "clojure_eval"
@@ -102,7 +116,9 @@ Examples:
                              (or deadline-grace-ms deadline/default-grace-ms))
        (fn []
          (try
-           (let [client (nrepl/with-port-initialized base-client port)
+           (let [client (if socket
+                          (nrepl/with-socket-initialized base-client socket)
+                          (nrepl/with-port-initialized base-client port))
                  env-type (nrepl/get-port-env-type client)
                  show-shadow-msg? (config/get-shadow-cljs-repl-message base-client)
                  ;; Check CLJS mode for shadow-cljs (skip probe if message disabled)
@@ -117,13 +133,13 @@ Examples:
                                           :shadow-cljs-mode? cljs-mode?
                                           :show-shadow-message? show-shadow-msg?}))
            (catch java.net.ConnectException e
-             {:outputs [[:err (format "Failed to connect to nREPL server on port %d: %s. Ensure an nREPL server is running on that port."
-                                      port (.getMessage e))]]
+             {:outputs [[:err (format "Failed to connect to nREPL server on %s: %s. Ensure an nREPL server is running there."
+                                      where (.getMessage e))]]
               :error true
               :context nil})
            (catch java.net.SocketException e
-             {:outputs [[:err (format "Connection error to nREPL server on port %d: %s. The server may have disconnected."
-                                      port (.getMessage e))]]
+             {:outputs [[:err (format "Connection error to nREPL server on %s: %s. The server may have disconnected."
+                                      where (.getMessage e))]]
               :error true
               :context nil})))))))
 
