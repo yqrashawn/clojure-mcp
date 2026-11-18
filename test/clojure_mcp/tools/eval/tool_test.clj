@@ -175,10 +175,28 @@
         (let [gone (str dir "/gone.sock")
               r (run-tool {"code" "1" "socket" gone})]
           (is (true? (:error? r)))
-          (is (str/includes? (str/join (:result r)) gone))))
+          (is (str/includes? (str/join (:result r)) gone))
+          (is (str/includes? (str/join (:result r)) "no such socket file")
+              "it never reached a server, so it does not say one disconnected")))
       (finally
         (nrepl.server/stop-server server)
         (doseq [f (reverse (file-seq dir))] (.delete ^java.io.File f))))))
+
+(deftest a-socket-keeps-its-own-state-apart-from-the-port
+  ;; the socket service is built from the base client, which keeps its
+  ;; :port: were the state keyed by port, the socket would reuse the port's
+  ;; sessions and :initialized?, and its REPL would never get the helpers
+  (let [base (nrepl/create {:port 7888})
+        _ (nrepl/set-port-initialized! base)
+        on-socket (nrepl/with-socket base "/tmp/x.sock")]
+    (is (true? (nrepl/port-initialized? base)))
+    (is (= 7888 (:port on-socket)) "the base port is still in the map")
+    (is (false? (nrepl/port-initialized? on-socket)) "the socket's REPL is initialized on its own")
+    (is (= "unix:/tmp/x.sock" (nrepl/endpoint on-socket)))
+    (let [back (nrepl/with-port on-socket 7888)]
+      (is (nil? (:socket back)) "with-port connects by port again")
+      (is (= 7888 (nrepl/endpoint back)))
+      (is (true? (nrepl/port-initialized? back)) "and finds the port's own state"))))
 
 (deftest socket-and-port-are-exclusive-and-socket-must-be-a-path
   (let [tool (eval-tool/create-eval-tool *nrepl-client-atom*)]

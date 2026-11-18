@@ -138,8 +138,13 @@ Examples:
               :error true
               :context nil})
            (catch java.net.SocketException e
-             {:outputs [[:err (format "Connection error to nREPL server on %s: %s. The server may have disconnected."
-                                      where (.getMessage e))]]
+             ;; a socket path nothing listens on throws SocketException, not
+             ;; ConnectException: it never reached a server
+             {:outputs [[:err (if (and socket (not (.exists (java.io.File. ^String socket))))
+                                (format "Failed to connect to nREPL server on %s: no such socket file. Ensure an nREPL server is listening there."
+                                        where)
+                                (format "Connection error to nREPL server on %s: %s. The server may have disconnected."
+                                        where (.getMessage e)))]]
               :error true
               :context nil})))))))
 

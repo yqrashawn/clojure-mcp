@@ -373,8 +373,9 @@
     (not (port-initialized? service)) initialize-port!))
 
 (defn with-port
-  "Returns a service map configured for the specified port.
-   If port is nil or same as current, returns service unchanged.
+  "Returns a service map configured for the specified port, without any
+   :socket (so it connects by port). If port is nil, or is the current port
+   of a service with no :socket, returns service unchanged.
    Ensures the port entry exists in state but does NOT initialize."
   [service port]
   (if (or (nil? port) (and (= port (:port service)) (nil? (:socket service))))
